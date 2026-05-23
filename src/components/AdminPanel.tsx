@@ -142,7 +142,9 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
       }
 
       // Fetch products
-      const pRes = await fetch('/api/products');
+      const pRes = await fetch('/api/products', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       const pData = await pRes.json();
       if (pRes.ok) setProducts(pData.products || []);
 

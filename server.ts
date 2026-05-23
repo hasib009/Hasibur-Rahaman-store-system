@@ -550,21 +550,41 @@ app.post('/api/admin/users/map', authenticateUser, verifyRole(['Master Admin']),
 
 
 // 3. PRODUCT PLATFORM CATALOG CRUD
-app.get('/api/products', (req, res) => {
+app.get('/api/products', (req: any, res: any) => {
   const { storeId, slug } = req.query;
   const db = dbInstance.getData();
   
-  let result = db.products;
-  if (storeId) {
-    result = result.filter(p => p.storeId === storeId);
-  } else if (slug) {
-    const targetStore = db.stores.find(s => s.slug === slug);
-    if (targetStore) {
-      result = result.filter(p => p.storeId === targetStore.id);
-    } else {
-      result = [];
+  // Try to authenticate optionally to see if a store owner or staff is browsing
+  let loggedInUser: any = null;
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer session-token-')) {
+    const userId = authHeader.replace('Bearer session-token-', '');
+    const user = db.users.find(u => u.id === userId);
+    if (user) {
+      loggedInUser = user;
     }
   }
+
+  let result = db.products;
+
+  // Apply Role-based filtering: Store Owner and Store Staff ("storage stuff") can only see their own store's products
+  if (loggedInUser && (loggedInUser.role === 'Store Owner' || loggedInUser.role === 'Store Staff' || loggedInUser.role === 'Admin')) {
+    const userStoreId = loggedInUser.storeId || '';
+    result = result.filter(p => p.storeId === userStoreId);
+  } else {
+    // Customers, guests, or Master Admin
+    if (storeId) {
+      result = result.filter(p => p.storeId === storeId);
+    } else if (slug) {
+      const targetStore = db.stores.find(s => s.slug === slug);
+      if (targetStore) {
+        result = result.filter(p => p.storeId === targetStore.id);
+      } else {
+        result = [];
+      }
+    }
+  }
+
   res.json({ products: result });
 });
 
@@ -902,7 +922,7 @@ async function bootServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*all', (req: any, res: any) => {
+    app.get('*', (req: any, res: any) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
