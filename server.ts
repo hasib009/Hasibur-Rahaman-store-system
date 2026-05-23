@@ -3,6 +3,7 @@ import path from 'path';
 import http from 'http';
 import { createServer as createViteServer } from 'vite';
 import { z } from 'zod';
+import { GoogleGenAI, Type } from "@google/genai";
 import { dbInstance } from './server-db.js';
 import { User, Store, Product, Order, Message, UserRole, OrderStatus } from './src/types.js';
 
@@ -23,7 +24,7 @@ app.get('/api/realtime', (req, res) => {
   const client = { id: Date.now(), res };
   sseClients.push(client);
 
-  res.write(`data: ${JSON.stringify({ type: 'connected', message: 'Connected to Hasib\'s Retail Pro SSE bus.' })}\n\n`);
+  res.write(`data: ${JSON.stringify({ type: 'connected', message: 'Connected to Hasib\'s Superstore Company SSE bus.' })}\n\n`);
 
   req.on('close', () => {
     sseClients = sseClients.filter(c => c.id !== client.id);
@@ -265,7 +266,9 @@ app.post('/api/admin/stores', authenticateUser, verifyRole(['Master Admin']), (r
       description,
       address,
       phone,
-      photoUrl: photoUrl || 'https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=800'
+      photoUrl: photoUrl || 'https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=800',
+      openingTime: req.body.openingTime || '09:00',
+      closingTime: req.body.closingTime || '21:00'
     };
 
     dbInstance.update((data) => {
@@ -323,6 +326,185 @@ app.put('/api/admin/stores/:id', authenticateUser, verifyRole(['Master Admin']),
 
   res.json({ success: true, store: updatedStore, message: 'Store properties modified and saved permanently.' });
   broadcastEvent('store_updated', { store: updatedStore });
+});
+
+// Edit store opening and closing times (Master Admin, Admin, Store Owner, Store Staff)
+app.put('/api/stores/:id/times', authenticateUser, verifyRole(['Master Admin', 'Admin', 'Store Owner', 'Store Staff']), (req: any, res) => {
+  const { id } = req.params;
+  const { openingTime, closingTime } = req.body;
+
+  if (!openingTime || !closingTime) {
+    return res.status(400).json({ error: 'Opening and closing times are mandatory.' });
+  }
+
+  // Verification checks: Store Specific users can only modify their own mapped store
+  const isGlobalAdmin = ['Master Admin', 'Admin'].includes(req.user.role);
+  if (!isGlobalAdmin && req.user.storeId !== id) {
+    return res.status(403).json({ error: 'Workplace bounds violation: You can only maintain timings for your assigned outlet.' });
+  }
+
+  let updatedStore: Store | undefined;
+  dbInstance.update((data) => {
+    const store = data.stores.find(s => s.id === id);
+    if (store) {
+      store.openingTime = openingTime;
+      store.closingTime = closingTime;
+      updatedStore = store;
+    }
+  });
+
+  if (!updatedStore) {
+    return res.status(404).json({ error: 'Store not found.' });
+  }
+
+  res.json({ success: true, store: updatedStore, message: `Store business times updated to ${openingTime} - ${closingTime}.` });
+  broadcastEvent('store_updated', { store: updatedStore });
+});
+
+// Gemini Barcode lookup and generation API
+app.post('/api/barcode/lookup', authenticateUser, async (req: any, res) => {
+  const { barcode } = req.body;
+  if (!barcode) {
+    return res.status(400).json({ error: 'Barcode is mandatory' });
+  }
+
+  const normalizedCode = barcode.toString().trim();
+  const db = dbInstance.getData();
+
+  // 1. Check if we already have a product matching this barcode to reuse ingredients and description
+  const existingProduct = db.products.find(p => p.barcode === normalizedCode);
+  if (existingProduct) {
+    return res.json({
+      success: true,
+      found: true,
+      product: {
+        name: existingProduct.name,
+        description: existingProduct.description,
+        price: existingProduct.price,
+        ingredients: existingProduct.ingredients || "Contains premium ingredients",
+        category: existingProduct.category || "General",
+        photoUrl: existingProduct.imageUrl
+      }
+    });
+  }
+
+  // 2. Call Gemini API if key is set, otherwise use heuristic simulator
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
+    try {
+      const ai = new GoogleGenAI({
+        apiKey: apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+
+      const prompt = `You are an expert retail inventory catalog generator. A user scanned a barcode with value: "${normalizedCode}".
+Based on this barcode number, you must generate a highly realistic, premium product entry.
+If the barcode matches a specific real-world product trend or number style, you are encouraged to match it.
+Otherwise, create an engaging, high-end retail item that matches the barcode context.
+Make sure to generate a helpful name, price (between 2.00 and 150.00 EUR), description, ingredients (if food/drink) or material configuration (if retail/clothing/general), and category.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING, description: "Catchy, high quality product name." },
+              description: { type: Type.STRING, description: "Professional enticing retail marketing description and ingredients list if food/beverage." },
+              price: { type: Type.NUMBER, description: "A realistic floating-point retail price (e.g., 3.50, 18.00)." },
+              ingredients: { type: Type.STRING, description: "Comma-separated key ingredients (e.g. Flour, sugar, chocolate) or material composition (e.g. 100% Organic Cotton) that goes into making the product." },
+              category: { type: Type.STRING, description: "Category name like Beverages, Apparel, Pastries, Electronics, etc." }
+            },
+            required: ["name", "description", "price", "ingredients", "category"]
+          }
+        }
+      });
+
+      const text = response.text;
+      if (text) {
+        const parsed = JSON.parse(text.trim());
+        return res.json({
+          success: true,
+          found: false,
+          product: {
+            name: parsed.name,
+            description: parsed.description,
+            price: Number(parsed.price) || 9.99,
+            ingredients: parsed.ingredients,
+            category: parsed.category || "General",
+            photoUrl: ""
+          }
+        });
+      }
+    } catch (err: any) {
+      console.error('Gemini processing error, falling back to simulated product:', err);
+    }
+  }
+
+  // Fallback heuristic simulation generator for offline/unconfigured API key environment
+  const hasDigits = /^\d+$/.test(normalizedCode);
+  let name = "";
+  let description = "";
+  let price = 5.99;
+  let ingredients = "";
+  let category = "General";
+
+  if (normalizedCode.startsWith('800')) {
+    const items = [
+      { name: "Double Shot Espresso Macchiato", desc: "Our secret blend of dark roasted Arabica espresso beans, velvety steamed whole milk, and caramel drizzle.", p: 3.80, ing: "Fine Arabica Espresso Blend, Whole Milk, Caramel Drizzle, Spring Water", cat: "Beverages" },
+      { name: "Gluten-Free Almond Amaretti Cookie", desc: "Traditional soft almond cookies crafted in-house with sweet and bitter apricots, baked to a perfect light crisp.", p: 4.50, ing: "Ground Almonds, Apricot Kernels, Egg Whites, Organic Sugar, Honey, Powdered Sugar", cat: "Pastries" },
+      { name: "Sourdough Chocolate Hazelnut Croissant", desc: "Perfectly laminated 36-hour sourdough pastry, double-folded with premium Dark Belgian Chocolate and roasted Piedmont hazelnut filling.", p: 5.20, ing: "Unbleached Flour, Laminated Butter, 70% Dark Belgian Chocolate, Piedmont Hazelnuts, Sea Salt", cat: "Pastries" }
+    ];
+    const picked = items[Number(normalizedCode) % items.length];
+    name = picked.name;
+    description = picked.desc;
+    price = picked.p;
+    ingredients = picked.ing;
+    category = picked.cat;
+  } else if (normalizedCode.startsWith('900')) {
+    const items = [
+      { name: "Selvedge Indigo Denim Trucker Jacket", desc: "Authentic 14oz shuttle-loomed Japanese selvedge denim in a deep indigo rinse. Built to age gracefully with distinct fading characteristics.", p: 149.00, ing: "100% Cotton Selvedge Denim, Brass Rivets, Copper Buttons", cat: "Apparel" },
+      { name: "Premium Merino Wool Knit Sweater", desc: "Thick double-ply Australian Merino wool sweater designed with a modern mock neck line for absolute luxury and cold-day warmth.", p: 89.00, ing: "100% Extra-Fine Australian Merino Wool", cat: "Apparel" },
+      { name: "Handmade Saffiano Leather Card Holder", desc: "Elegant textured Saffiano leather wallet featuring four hand-stitched pockets and center bill pouch with hand-painted raw edges.", p: 39.00, ing: "Genuine Saffiano Leather, Waxed Linen Thread, Suede Lining", cat: "Accessories" }
+    ];
+    const picked = items[Number(normalizedCode) % items.length];
+    name = picked.name;
+    description = picked.desc;
+    price = picked.p;
+    ingredients = picked.ing;
+    category = picked.cat;
+  } else {
+    const items = [
+      { name: "Hydro-Active Collagen Botanical Facial Serum", desc: "A fast-absorbing, multi-molecular weight hydration treatment centering plant collagen and vitamin E extracts.", p: 24.50, ing: "Prunus Amygdalus Oil, Hydrolyzed Wheat Protein, Natural Tocopherol, Jojoba Oil", cat: "Beauty & Spa" },
+      { name: "Crisp Sea-Salt Rosemary Crackers", desc: "Stoneground wheat flour dough lightly baked and dusted with hand-harvested sea-salt flakes and organic rosemary twigs.", p: 4.20, ing: "Stoneground Whole Wheat Flour, Cold-Pressed Olive Oil, Fresh Rosemary, Maldon Sea Salt", cat: "Bakery & Snacks" }
+    ];
+    const index = normalizedCode.charCodeAt(0) % items.length;
+    const picked = items[isNaN(index) ? 0 : index];
+    name = picked.name;
+    description = picked.desc;
+    price = picked.p;
+    ingredients = picked.ing;
+    category = picked.cat;
+  }
+
+  res.json({
+    success: true,
+    found: false,
+    product: {
+      name,
+      description,
+      price,
+      ingredients,
+      category,
+      photoUrl: ""
+    }
+  });
 });
 
 // System Users retrieval for Master Admin
@@ -726,7 +908,7 @@ async function bootServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Hasib's Retail Pro Server online: http://0.0.0.0:${PORT}`);
+    console.log(`Hasib's Superstore Company Server online: http://0.0.0.0:${PORT}`);
   });
 }
 

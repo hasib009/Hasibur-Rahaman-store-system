@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, Store, Product, Order, Message } from '../types.js';
-import { Shield, Home, Users, Store as StoreIcon, ShoppingBag, Plus, Map, MapPin, Check, X, Phone, Edit, UploadCloud, Barcode, Search, ShoppingCart, Trash2, MessageCircle } from 'lucide-react';
+import { Shield, Home, Users, Store as StoreIcon, ShoppingBag, Plus, Map, MapPin, Check, X, Phone, Edit, UploadCloud, Barcode, Search, ShoppingCart, Trash2, MessageCircle, Clock, Camera } from 'lucide-react';
+import { BarcodeScannerModal } from './BarcodeScannerModal.js';
 
 interface AdminPanelProps {
   token: string | null;
@@ -62,10 +63,37 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
   const [prodError, setProdError] = useState<string | null>(null);
   const [prodSuccess, setProdSuccess] = useState<string | null>(null);
 
+  // Camera Barcode Scanning States
+  const [isCatalogScannerOpen, setIsCatalogScannerOpen] = useState(false);
+  const [isPosScannerOpen, setIsPosScannerOpen] = useState(false);
+  const [scannerLoading, setScannerLoading] = useState(false);
+
   // Live order panel communication states
   const [chattingOrderId, setChattingOrderId] = useState<string | null>(null);
   const [activeOrderMessages, setActiveOrderMessages] = useState<Message[]>([]);
   const [adminChatText, setAdminChatText] = useState('');
+
+  // Timing changing system state
+  const [timingStoreId, setTimingStoreId] = useState('');
+  const [openingTime, setOpeningTime] = useState('09:00');
+  const [closingTime, setClosingTime] = useState('21:00');
+  const [timingMsg, setTimingMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [timingLoading, setTimingLoading] = useState(false);
+
+  // Sync timing systems when stores load or timing selection shifts
+  useEffect(() => {
+    if (stores.length > 0) {
+      const activeId = currentUser.role === 'Master Admin' ? (timingStoreId || stores[0].id) : (currentUser.storeId || '');
+      const store = stores.find(s => s.id === activeId);
+      if (store) {
+        setTimingStoreId(store.id);
+        const oT = store.openingTime || '09:00';
+        const cT = store.closingTime || '21:00';
+        setOpeningTime(oT);
+        setClosingTime(cT);
+      }
+    }
+  }, [stores, currentUser, timingStoreId]);
 
   const syncOrderChatThread = async (orderId: string) => {
     const order = orders.find(o => o.id === orderId);
@@ -256,6 +284,56 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
     }
   };
 
+  const handleCatalogBarcodeScan = async (barcode: string) => {
+    setProdBarcode(barcode);
+    setScannerLoading(true);
+    setProdError(null);
+    setProdSuccess(`Scanned barcode: ${barcode}. AI/Generative Context is synthesisng details...`);
+
+    try {
+      const response = await fetch('/api/barcode/lookup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ barcode })
+      });
+
+      const resData = await response.json();
+      if (response.ok && resData.success) {
+        const p = resData.product;
+        setProdName(p.name);
+        setProdDesc(`Ingredients: ${p.ingredients}. ${p.description}`);
+        setProdPrice(p.price.toString());
+        setProdStock('35'); // standard default starting stock
+        
+        // Auto-select beautiful themed imagery based on category
+        const cat = (p.category || 'General').toLowerCase();
+        let selectedUrl = "https://images.unsplash.com/photo-1472851294608-062f824d29cc?q=80&w=800"; // General Retail
+        if (cat.includes('beverage') || cat.includes('coffee') || cat.includes('drink')) {
+          selectedUrl = "https://images.unsplash.com/photo-1541167760496-1628856ab772?q=80&w=800"; // Coffee
+        } else if (cat.includes('pastry') || cat.includes('croissant') || cat.includes('bakery') || cat.includes('cake') || cat.includes('cookie')) {
+          selectedUrl = "https://images.unsplash.com/photo-1555507036-ab1f4038808a?q=80&w=800"; // Bakery
+        } else if (cat.includes('apparel') || cat.includes('clothing') || cat.includes('jacket') || cat.includes('denim')) {
+          selectedUrl = "https://images.unsplash.com/photo-1551488831-00ddcb6c6bd3?q=80&w=800"; // Fashion/Denim
+        } else if (cat.includes('accessories') || cat.includes('wallet') || cat.includes('leather')) {
+          selectedUrl = "https://images.unsplash.com/photo-1441986300917-64674bd600d8?q=80&w=800"; // Accessories
+        } else if (cat.includes('beauty') || cat.includes('spa') || cat.includes('serum')) {
+          selectedUrl = "https://images.unsplash.com/photo-1608248597481-496100c80836?q=80&w=800"; // Beauty Serum
+        }
+        setProdImage(selectedUrl);
+        setProdSuccess(`Scanned successfully! Populated product "${p.name}" via Gemini auto-synthesis.`);
+      } else {
+        setProdError(resData.error || 'Failed to analyze barcode details.');
+      }
+    } catch (err) {
+      setProdError('Network error during barcode detail synthesis.');
+    } finally {
+      setScannerLoading(false);
+    }
+  };
+
   // Add / Edit catalog items
   const handleAddCatalogProduct = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -395,14 +473,10 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
     }
   };
 
-  const handleBarcodeSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleDirectBarcodeScan = (code: string) => {
     setPosError(null);
     setPosSuccess(null);
     
-    const code = posBarcodeIn.trim();
-    if (!code) return;
-
     const storeIdToUse = currentUser.role === 'Master Admin' ? selectedCatalogStoreId : currentUser.storeId;
     if (!storeIdToUse) {
       setPosError('No active storefront bound to your staff account.');
@@ -421,6 +495,13 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
     } else {
       setPosError(`Unassigned Barcode: No product with barcode "${code}" exists for this store.`);
     }
+  };
+
+  const handleBarcodeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = posBarcodeIn.trim();
+    if (!code) return;
+    handleDirectBarcodeScan(code);
   };
 
   const handlePosCheckout = async (e: React.FormEvent) => {
@@ -518,6 +599,42 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
     }
   };
 
+  const handleTimingSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!timingStoreId) return;
+
+    setTimingLoading(true);
+    setTimingMsg(null);
+
+    try {
+      const response = await fetch(`/api/stores/${timingStoreId}/times`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ openingTime, closingTime })
+      });
+
+      const resData = await response.json();
+      if (response.ok) {
+        setTimingMsg({ type: 'success', text: resData.message || 'Store operating hours updated successfully!' });
+        
+        setStores((prevStores) =>
+          prevStores.map((st) =>
+            st.id === timingStoreId ? { ...st, openingTime, closingTime } : st
+          )
+        );
+      } else {
+        setTimingMsg({ type: 'error', text: resData.error || 'Failed to update store hours.' });
+      }
+    } catch (err) {
+      setTimingMsg({ type: 'error', text: 'Network communication failure.' });
+    } finally {
+      setTimingLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center py-20">
@@ -550,6 +667,89 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
           <p className="text-[10px] text-slate-500 font-mono font-bold uppercase">Workplace Scope Locked Control</p>
           <p className="text-xs font-semibold text-yellow-500 font-mono uppercase">{currentUser.role === 'Master Admin' ? 'Master Authority Area' : 'Local Workspace Area'}</p>
         </div>
+      </div>
+
+      {/* Operating Hours Timing System (Master Admin, Store Owner, Store Staff) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl text-left space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-yellow-500/10 flex items-center justify-center text-yellow-500">
+              <Clock className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="font-sans font-bold text-white text-sm uppercase">Store Operations Timing Manager</h4>
+              <p className="text-[11px] text-slate-400">Master Admins, Owners, and Duty Staff can modify open & close timeframes dynamically.</p>
+            </div>
+          </div>
+          <span className="text-[10px] font-mono uppercase bg-yellow-500/10 text-yellow-500 px-3 py-1 rounded-full border border-yellow-500/20">
+            Secure Hours Dashboard
+          </span>
+        </div>
+
+        {timingMsg && (
+          <div className={`p-3 rounded-xl text-xs font-mono border ${
+            timingMsg.type === 'success' ? 'bg-emerald-500/5 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/5 text-rose-400 border-rose-500/20'
+          }`}>
+            {timingMsg.text}
+          </div>
+        )}
+
+        <form onSubmit={handleTimingSubmit} className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+          {currentUser.role === 'Master Admin' ? (
+            <div className="md:col-span-4 space-y-1 block text-left">
+              <label className="text-[10px] font-bold text-slate-400 tracking-wider uppercase block">Select Target Outlet *</label>
+              <select
+                value={timingStoreId}
+                onChange={(e) => setTimingStoreId(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-850 rounded-lg h-9 px-3 text-xs text-slate-200 outline-none focus:border-yellow-500 cursor-pointer"
+              >
+                <option value="">[Select Store]</option>
+                {stores.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="md:col-span-4 space-y-1 block text-left">
+              <label className="text-[10px] font-bold text-slate-400 tracking-wider uppercase block">Your Assigned Outlet</label>
+              <div className="bg-slate-950/60 border border-slate-850 h-9 px-3 flex items-center text-xs text-slate-350 font-bold rounded-lg font-mono">
+                {stores.find(s => s.id === timingStoreId)?.name || 'Initializing...'}
+              </div>
+            </div>
+          )}
+
+          <div className="md:col-span-3 space-y-1 block text-left">
+            <label className="text-[10px] font-bold text-slate-400 tracking-wider uppercase block">Opening Time (24h) *</label>
+            <input
+              type="time"
+              required
+              value={openingTime}
+              onChange={(e) => setOpeningTime(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg h-9 px-3 text-xs text-slate-200 outline-none focus:border-yellow-500 cursor-pointer font-mono"
+            />
+          </div>
+
+          <div className="md:col-span-3 space-y-1 block text-left">
+            <label className="text-[10px] font-bold text-slate-400 tracking-wider uppercase block">Closing Time (24h) *</label>
+            <input
+              type="time"
+              required
+              value={closingTime}
+              onChange={(e) => setClosingTime(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg h-9 px-3 text-xs text-slate-200 outline-none focus:border-yellow-500 cursor-pointer font-mono"
+            />
+          </div>
+
+          <div className="md:col-span-2">
+            <button
+              type="submit"
+              disabled={timingLoading || !timingStoreId}
+              className="w-full bg-yellow-500 hover:bg-yellow-600 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-black h-9 rounded-lg text-xs tracking-wider uppercase transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              {timingLoading ? 'Saving...' : 'SAVE HOURS'}
+            </button>
+          </div>
+        </form>
       </div>
 
       {/* Dynamic contents switcher */}
@@ -595,8 +795,16 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
                       placeholder="Type barcode (e.g. 800111 or 800222) or scan input..."
                       value={posBarcodeIn}
                       onChange={(e) => setPosBarcodeIn(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 focus:border-yellow-500 rounded-lg h-12 px-4 text-xs text-slate-200 outline-none font-mono"
+                      className="flex-1 bg-slate-950 border border-slate-800 focus:border-yellow-500 rounded-lg h-12 px-4 text-xs text-slate-200 outline-none font-mono"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setIsPosScannerOpen(true)}
+                      className="px-4.5 bg-slate-850 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-755 rounded-lg h-12 flex items-center justify-center transition-all cursor-pointer shadow-md shrink-0"
+                      title="Open Scanner Camera"
+                    >
+                      <Camera className="w-5 h-5" />
+                    </button>
                     <button
                       type="submit"
                       className="bg-yellow-500 hover:bg-yellow-600 text-slate-950 text-xs px-5 h-12 rounded-lg font-bold uppercase shrink-0 transition-all cursor-pointer"
@@ -1132,16 +1340,27 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
                     />
                   </div>
 
-                  <div className="space-y-1 block">
+                  <div className="space-y-1 block text-left">
                     <label className="text-[10px] font-bold text-slate-400 tracking-wider uppercase block">Unique Barcode / Universal UPC *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. 800111 or 900333"
-                      value={prodBarcode}
-                      onChange={(e) => setProdBarcode(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg h-10 px-3 text-xs text-slate-200 outline-none focus:border-yellow-500 font-mono"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. 800111 or 900333"
+                        value={prodBarcode}
+                        onChange={(e) => setProdBarcode(e.target.value)}
+                        className="flex-1 bg-slate-950 border border-slate-800 rounded-lg h-10 px-3 text-xs text-slate-200 outline-none focus:border-yellow-500 font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setIsCatalogScannerOpen(true)}
+                        className="px-4.5 bg-yellow-500 hover:bg-yellow-600 hover:scale-105 active:scale-95 text-slate-950 rounded-lg text-xs font-bold tracking-wider uppercase transition-all flex items-center gap-1.5 cursor-pointer h-10 shadow-md shrink-0"
+                        title="Open Camera Scanner"
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>Scan</span>
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-1 block">
@@ -1449,6 +1668,20 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
           </div>
         )}
       </div>
+
+      {/* Universal Scanner Modals */}
+      <BarcodeScannerModal
+        isOpen={isCatalogScannerOpen}
+        onClose={() => setIsCatalogScannerOpen(false)}
+        onScanSuccess={handleCatalogBarcodeScan}
+        title="Inventory Barcode Auto-Population"
+      />
+      <BarcodeScannerModal
+        isOpen={isPosScannerOpen}
+        onClose={() => setIsPosScannerOpen(false)}
+        onScanSuccess={handleDirectBarcodeScan}
+        title="POS Selling Barcode Reader"
+      />
     </div>
   );
 }

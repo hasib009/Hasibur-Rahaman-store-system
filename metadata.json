@@ -1,8 +1,9 @@
 {
-  "name": "Hasib's Retail Pro",
+  "name": "Superstore company",
   "description": "Enterprise-grade multi-tenant E-Commerce and Product Management Platform featuring secure store provisioning, role-based control suites, and real-time structured retail services.",
   "requestFramePermissions": [
-    "geolocation"
+    "geolocation",
+    "camera"
   ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

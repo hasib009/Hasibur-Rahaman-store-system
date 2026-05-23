@@ -79,7 +79,9 @@ const INITIAL_SCHEMA: DatabaseSchema = {
       description: 'Charming Italian coffee & pastries served in the historic heart of Rome.',
       address: 'Piazza Navona 4, 00186 Roma RM, Italy',
       phone: '+39 06 123456',
-      photoUrl: 'https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=800'
+      photoUrl: 'https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=800',
+      openingTime: '09:00',
+      closingTime: '21:00'
     },
     {
       id: 'store-hasib-fashion',
@@ -88,7 +90,9 @@ const INITIAL_SCHEMA: DatabaseSchema = {
       description: 'Exclusive retail design clothing, hand-curated suits, and luxury apparel.',
       address: 'Via del Corso 112, 00186 Roma RM, Italy',
       phone: '+39 06 987654',
-      photoUrl: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800'
+      photoUrl: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800',
+      openingTime: '10:00',
+      closingTime: '20:00'
     }
   ],
   products: [
@@ -238,7 +242,7 @@ const INITIAL_SCHEMA: DatabaseSchema = {
   notifications: [
     {
       id: 'notif-1',
-      title: 'Welcome to Hasib\'s Retail Pro!',
+      title: 'Welcome to Hasib\'s Superstore Company!',
       body: 'Platform initialized with full corporate credentials and dual flagship store instances.',
       timestamp: new Date('2026-05-23T00:00:00Z').toISOString()
     }
@@ -259,6 +263,11 @@ export class FileDB {
         const parsed = JSON.parse(fileContent);
         // Guarantee models exist
         if (parsed.users && parsed.stores && parsed.products && parsed.orders && parsed.messages) {
+          // Dynamic migration/defaulting for loaded stores
+          parsed.stores.forEach((s: any) => {
+            if (!s.openingTime) s.openingTime = '09:00';
+            if (!s.closingTime) s.closingTime = '21:00';
+          });
           // Verify that hasibmd461@gmail.com Master Admin matches correct credentials exactly
           let masterAdmin = parsed.users.find((u: any) => u.email === MASTER_ADMIN_EMAIL);
           if (!masterAdmin) {

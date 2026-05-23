@@ -21,6 +21,8 @@ export interface Store {
   address: string;
   phone: string;
   photoUrl: string; // Base64 stored URL or standard unsplash mock
+  openingTime?: string;
+  closingTime?: string;
 }
 
 export interface Product {
@@ -32,6 +34,8 @@ export interface Product {
   imageUrl: string;
   stock: number;
   barcode?: string;
+  ingredients?: string;
+  category?: string;
 }
 
 export type OrderStatus = 'Pending' | 'Confirmed' | 'Preparing' | 'Ready' | 'Completed' | 'Cancelled';

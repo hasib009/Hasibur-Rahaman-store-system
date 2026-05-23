@@ -604,7 +604,7 @@ export default function App() {
 
           <div className="text-left">
             <h1 className="text-lg font-bold font-display tracking-tight text-white leading-none uppercase">
-              Hasib's <span className="text-yellow-500">Retail Pro</span>
+              Hasib's <span className="text-yellow-500">Superstore Company</span>
             </h1>
             {activeStore && (
               <span className="text-[10px] text-zinc-400 font-mono tracking-widest block mt-0.5">
@@ -691,6 +691,18 @@ export default function App() {
                 >
                   <ShoppingBag className="w-4 h-4 shrink-0" />
                   <span>Explore Shelf</span>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('locations'); setIsSidebarOpen(false); }}
+                  className={`w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-3 transition-colors cursor-pointer border ${
+                    activeTab === 'locations'
+                      ? 'bg-yellow-500 text-slate-950 border-yellow-500 font-bold'
+                      : 'bg-slate-900/10 text-slate-300 border-transparent hover:bg-slate-900 hover:border-slate-850'
+                  }`}
+                >
+                  <MapPin className="w-4 h-4 shrink-0 text-yellow-500" />
+                  <span>Store Locations</span>
                 </button>
 
                 {currentUser && (
@@ -927,7 +939,7 @@ export default function App() {
                       <input
                         type="email"
                         required
-                        placeholder="hasibmd461@gmail.com"
+                        placeholder="e.g. name@domain.com"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-lg h-10 px-3 text-xs text-slate-200 outline-none focus:border-yellow-500"
@@ -939,7 +951,7 @@ export default function App() {
                       <input
                         type="password"
                         required
-                        placeholder="HASIBUR.spv1"
+                        placeholder="••••••••"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-lg h-10 px-3 text-xs text-slate-350 outline-none focus:border-yellow-500"
@@ -1051,21 +1063,12 @@ export default function App() {
                   </form>
                 )}
               </div>
-
-              {/* Master Credentials quick helper notes */}
-              <div className="mt-5 bg-slate-950 text-slate-300 rounded-xl p-4 text-xs font-mono border text-left scale-95">
-                <p className="font-bold text-yellow-500 uppercase flex items-center gap-1">Master Credentials</p>
-                <div className="mt-2 space-y-1">
-                  <p>Email: <strong className="text-white">hasibmd461@gmail.com</strong></p>
-                  <p>Pass: <strong className="text-white">HASIBUR.spv1</strong></p>
-                </div>
-              </div>
             </div>
           </div>
         )}
 
         {/* WORKSPACE APP PANELS LAYOUT */}
-        {((currentUser || authView === 'guest') && (activeTab === 'explore' || !currentUser)) && (
+        {((currentUser || authView === 'guest') && activeTab === 'explore') && (
           <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 overflow-y-auto">
             
             {/* PANEL 1: PRODUCT CATALOG GRID (lg:col-span-6) */}
@@ -1078,9 +1081,15 @@ export default function App() {
                       Product Catalog Grid
                     </h4>
                     {activeStore ? (
-                      <p className="subtitle-desc text-slate-400 text-xs mt-1 leading-snug">
-                        {activeStore.description}
-                      </p>
+                      <div className="space-y-1 mt-1">
+                        <p className="subtitle-desc text-slate-400 text-xs leading-snug">
+                          {activeStore.description}
+                        </p>
+                        <p className="text-[11px] text-yellow-500 font-medium flex items-center gap-1.5 mt-1 bg-yellow-500/5 border border-yellow-500/10 rounded-lg px-2 py-1 w-fit">
+                          <Clock className="w-3.5 h-3.5 shrink-0" />
+                          <span>Hours: <strong className="font-mono">{activeStore.openingTime || '09:00'} - {activeStore.closingTime || '21:00'}</strong></span>
+                        </p>
+                      </div>
                     ) : (
                       <p className="subtitle-desc text-slate-400 text-xs mt-1">Please selection a storefront outlet to browse items.</p>
                     )}
@@ -1431,6 +1440,80 @@ export default function App() {
           </div>
         )}
 
+        {/* LOCATIONS TAB VIEW FOR CUSTOMERS & GUESTS */}
+        {activeTab === 'locations' && (
+          <div className="flex-1 p-6 overflow-y-auto w-full text-left space-y-6">
+            <header className="glass p-6 rounded-3xl border border-slate-800 space-y-2">
+              <h2 className="text-xl font-bold font-display uppercase text-white flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-yellow-500" />
+                <span>Our Flagship Store Locations</span>
+              </h2>
+              <p className="text-xs text-slate-400">
+                Browse our current active retail outlets, view their opening and closing hours, and jump directly into any store to view its local inventory.
+              </p>
+            </header>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {stores.map((s) => {
+                const isActive = activeStore?.id === s.id;
+                return (
+                  <div
+                    key={s.id}
+                    className={`glass rounded-3xl border overflow-hidden flex flex-col transition-all duration-300 hover:shadow-xl hover:border-slate-700 ${
+                      isActive ? 'border-yellow-500/50 bg-yellow-500/5' : 'border-slate-800/80 bg-slate-900/40'
+                    }`}
+                  >
+                    <div className="aspect-video w-full bg-slate-900 relative">
+                      <img src={s.photoUrl || "https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=800"} alt={s.name} className="w-full h-full object-cover" />
+                      {isActive && (
+                        <div className="absolute top-3 left-3 bg-yellow-500 text-slate-950 text-[10px] font-bold font-mono px-3 py-1 rounded-full uppercase tracking-wider shadow-md">
+                          Currently Active Store
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
+                      <div className="space-y-2">
+                        <h3 className="text-lg font-bold text-white uppercase tracking-tight">{s.name}</h3>
+                        <p className="text-xs text-slate-450 leading-relaxed">{s.description}</p>
+                        
+                        <div className="pt-3 border-t border-slate-900/60 space-y-2 text-xs font-mono text-slate-300">
+                          <p className="flex items-start gap-2">
+                            <MapPin className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                            <span>{s.address}</span>
+                          </p>
+                          <p className="flex items-center gap-2">
+                            <Phone className="w-4 h-4 text-slate-500 shrink-0" />
+                            <span>{s.phone}</span>
+                          </p>
+                          <p className="flex items-center gap-2 text-yellow-500 bg-yellow-500/5 border border-yellow-500/10 rounded-xl px-3 py-2 w-fit mt-1">
+                            <Clock className="w-4 h-4 shrink-0" />
+                            <span className="font-sans font-bold text-xs uppercase text-slate-200">
+                              Hours: <span className="text-yellow-550 font-mono tracking-wide">{s.openingTime || '09:00'} - {s.closingTime || '21:00'}</span>
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          handleStoreChoice(s);
+                          setActiveTab('explore');
+                          setIsSidebarOpen(false);
+                        }}
+                        className="w-full bg-slate-950 hover:bg-yellow-500 hover:text-slate-950 text-yellow-500 font-bold font-sans text-xs uppercase h-11 rounded-xl transition-all border border-slate-800 hover:border-yellow-500 flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                      >
+                        <ShoppingBag className="w-4 h-4" />
+                        <span>Visit Store & Browse Items</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* COMPONENT MODULES TAB SWITCH DETAILS */}
         {currentUser && activeTab === 'settings' && (
           <div className="flex-1 p-6 overflow-y-auto w-full">
@@ -1521,10 +1604,23 @@ export default function App() {
         </div>
       )}
 
+      {/* Floating WhatsApp support shortcut */}
+      <a
+        href="https://wa.me/393520586823"
+        target="_blank"
+        rel="noreferrer"
+        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-[#25D366] hover:bg-[#20ba5a] text-white px-4.5 py-3 rounded-full shadow-[0_8px_30px_rgb(37,211,102,0.3)] hover:scale-105 active:scale-95 transition-all font-sans font-bold text-xs uppercase tracking-wider border border-emerald-400 cursor-pointer"
+        id="whatsapp-support-float"
+        title="Need assistance? Chat on WhatsApp"
+      >
+        <Phone className="w-3.5 h-3.5 text-white animate-bounce" />
+        <span>Chat on WhatsApp</span>
+      </a>
+
       {/* FOOTER BRANDS */}
       <footer className="mt-8 py-5 border-t border-slate-900 flex flex-col sm:flex-row justify-between items-center px-6 gap-4 text-center z-10 glass">
         <span className="text-[10px] text-slate-500 font-mono tracking-widest uppercase">
-          Enterprise Multi-tenant Platform © Hasib's Retail Pro
+          Enterprise Multi-tenant Platform © Hasib's Superstore Company
         </span>
         <div className="flex gap-4 font-mono text-[10px] text-slate-450 uppercase tracking-tighter">
           <span>Active Flagships: {stores.length}</span>
