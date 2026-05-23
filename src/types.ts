@@ -9,6 +9,7 @@ export interface User {
   storeId?: string; // Mapped store (local Admins, Store Staff, Store Owners are locked to this store)
   phone: string;
   avatar: string;
+  gender?: 'Man' | 'Woman';
   deliveryLocation?: string; // Delivery lat/long or textual address description for sharing
   registrationDate: string;
 }
@@ -61,6 +62,7 @@ export interface Order {
   items: OrderItem[];
   totalPrice: number;
   createdAt: string;
+  completedAt?: string;
 }
 
 export interface Message {

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { User } from '../types.js';
-import { Save, Lock, Mail, Smartphone, UserCheck, MapPin } from 'lucide-react';
+import { Save, Lock, Mail, Smartphone, UserCheck, MapPin, UploadCloud, Image as ImageIcon, Check, AlertCircle } from 'lucide-react';
 
 interface SettingsPanelProps {
   user: User;
@@ -22,11 +22,64 @@ export default function SettingsPanel({ user, token, onProfileUpdated }: Setting
   const [phone, setPhone] = useState(user.phone || '');
   const [email, setEmail] = useState(user.email || '');
   const [avatar, setAvatar] = useState(user.avatar || '');
+  const [gender, setGender] = useState<'Man' | 'Woman'>(user.gender || 'Man');
   const [deliveryLocation, setDeliveryLocation] = useState(user.deliveryLocation || '');
   const [newPassword, setNewPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const processFile = (file: File) => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    if (!file.type.startsWith('image/')) {
+      setErrorMsg('Invalid file format. Please select or drop a valid image file (JPG, PNG, WebP, etc.).');
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setErrorMsg('Image file size exceeds the 8MB storage limit.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64String = event.target?.result as string;
+      if (base64String) {
+        setAvatar(base64String);
+        setSuccessMsg('Successfully loaded image from your device! Click "Save Profile Changes" below to secure it.');
+      }
+    };
+    reader.onerror = () => {
+      setErrorMsg('Failed to decode the image file from device storage.');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      processFile(e.target.files[0]);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,6 +115,7 @@ export default function SettingsPanel({ user, token, onProfileUpdated }: Setting
             phone,
             email,
             avatar,
+            gender,
             newPassword: newPassword || undefined
           })
       });
@@ -173,6 +227,63 @@ export default function SettingsPanel({ user, token, onProfileUpdated }: Setting
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg h-10 px-3.5 text-xs text-slate-200 mt-1 outline-none focus:border-yellow-500"
               />
             </div>
+
+            {/* Device Drag-and-Drop & Click Photo Upload Area */}
+            <div className="mt-4 pt-2">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1.5">
+                Device Storage Upload (Drag & Drop or Touch Selection)
+              </span>
+              
+              <div 
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-2xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-300 ${
+                  isDragging 
+                    ? 'border-yellow-500 bg-yellow-500/10' 
+                    : 'border-slate-800 hover:border-slate-700 bg-slate-950/60'
+                }`}
+                id="profile-picture-drag-target"
+              >
+                <input 
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  accept="image/*"
+                  className="hidden"
+                />
+                
+                {avatar && avatar.startsWith('data:image/') ? (
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="relative w-16 h-16 rounded-full overflow-hidden border-2 border-yellow-500 shadow-md">
+                      <img src={avatar} alt="Device avatar preview" className="w-full h-full object-cover" />
+                    </div>
+                    <span className="text-[10px] font-mono text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                      <Check className="w-3 h-3 text-emerald-500" />
+                      Device Image Pre-loaded
+                    </span>
+                    <p className="text-[9px] text-slate-500">
+                      Click or drop a different image to replace. Size of uploaded data is safe & valid.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-slate-400 mx-auto border border-slate-800">
+                      <UploadCloud className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-slate-355">
+                        Drag & Drop profile image here, or <span className="text-yellow-500 cursor-pointer hover:underline">browse your folders</span>
+                      </p>
+                      <p className="text-[9px] text-slate-500 mt-1 uppercase tracking-wider font-mono">
+                        Supports photo, avatar snapshots, or gallery camera PNG/JPG (Max 8MB)
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -188,6 +299,37 @@ export default function SettingsPanel({ user, token, onProfileUpdated }: Setting
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg h-11 px-3.5 text-xs text-slate-200 outline-none focus:border-yellow-500"
               />
+            </div>
+
+            {/* Gender Selection */}
+            <div className="space-y-1 block">
+              <label className="text-[10px] font-bold text-slate-400 tracking-wider uppercase block">
+                Gender Identification (Required)
+              </label>
+              <div className="grid grid-cols-2 gap-2 h-11">
+                <button
+                  type="button"
+                  onClick={() => setGender('Man')}
+                  className={`h-full border rounded-lg text-xs font-bold transition-all cursor-pointer select-none ${
+                    gender === 'Man' 
+                      ? 'bg-yellow-500 text-slate-950 border-yellow-500 font-bold shadow-md' 
+                      : 'bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-500 hover:text-white'
+                  }`}
+                >
+                  ♂ Man
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGender('Woman')}
+                  className={`h-full border rounded-lg text-xs font-bold transition-all cursor-pointer select-none ${
+                    gender === 'Woman' 
+                      ? 'bg-yellow-500 text-slate-950 border-yellow-500 font-bold shadow-md' 
+                      : 'bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-500 hover:text-white'
+                  }`}
+                >
+                  ♀ Woman
+                </button>
+              </div>
             </div>
 
             {/* Official Contact Phone */}

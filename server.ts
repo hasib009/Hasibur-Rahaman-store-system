@@ -81,6 +81,7 @@ const SignupSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters'),
   phone: z.string().min(6, 'Valid phone number is required'),
   avatar: z.string().optional(),
+  gender: z.enum(['Man', 'Woman']),
   role: z.enum(['Customer', 'Store Owner']),
   storeId: z.string().optional() // For Owners who sign up asking for predefined store context
 });
@@ -112,6 +113,7 @@ app.post('/api/auth/signup', (req, res) => {
       storeId: isMasterAdmin ? undefined : validated.storeId,
       phone: validated.phone,
       avatar: validated.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${validated.username}`,
+      gender: validated.gender,
       registrationDate: new Date().toISOString()
     };
 
@@ -173,9 +175,9 @@ app.get('/api/users/me', authenticateUser, (req: any, res) => {
 // Fixes Gmail Change persistence caching errors
 app.put('/api/users/profile', authenticateUser, (req: any, res) => {
   try {
-    const { username, email, phone, avatar, newPassword } = req.body;
-    if (!username || !email || !phone) {
-      return res.status(400).json({ error: 'Username, email and phone number are required.' });
+    const { username, email, phone, avatar, gender, newPassword } = req.body;
+    if (!username || !email || !phone || !gender) {
+      return res.status(400).json({ error: 'Username, email, phone number, and gender are required.' });
     }
 
     dbInstance.update((data) => {
@@ -184,6 +186,7 @@ app.put('/api/users/profile', authenticateUser, (req: any, res) => {
         dbUser.username = username;
         dbUser.email = email.toLowerCase().trim();
         dbUser.phone = phone;
+        dbUser.gender = gender;
         if (avatar) dbUser.avatar = avatar;
       }
       if (newPassword && newPassword.trim() !== '') {
@@ -548,6 +551,40 @@ app.post('/api/admin/users/map', authenticateUser, verifyRole(['Master Admin']),
   broadcastEvent('user_mapped', { userId, user: updatedUser });
 });
 
+// PUT /api/admin/users/:id allows Master Admin to change credentials or passwords of any user
+app.put('/api/admin/users/:id', authenticateUser, verifyRole(['Master Admin']), (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+    const { email, password, username, phone, gender, role, storeId } = req.body;
+    
+    let updatedUser: any = null;
+    dbInstance.update((data) => {
+      const u = data.users.find(usr => usr.id === id);
+      if (u) {
+        if (email) u.email = email.toLowerCase().trim();
+        if (username) u.username = username;
+        if (phone) u.phone = phone;
+        if (gender) u.gender = gender;
+        if (role) u.role = role;
+        if (storeId !== undefined) u.storeId = storeId || undefined;
+        updatedUser = u;
+      }
+      if (password && password.trim() !== '') {
+        data.passwords[id] = password;
+      }
+    });
+
+    if (!updatedUser) {
+      return res.status(404).json({ error: 'User does not exist.' });
+    }
+
+    res.json({ success: true, user: updatedUser, message: 'User credentials updated smoothly by Master Admin!' });
+    broadcastEvent('user_updated', { userId: id });
+  } catch (err) {
+    res.status(500).json({ error: 'Server edit user error.' });
+  }
+});
+
 
 // 3. PRODUCT PLATFORM CATALOG CRUD
 app.get('/api/products', (req: any, res: any) => {
@@ -816,6 +853,9 @@ app.put('/api/orders/:id/status', authenticateUser, verifyRole(['Master Admin', 
         return res.status(403).json({ error: 'Barred Context: You do not possess staff clearance over this Store order.' });
       }
       order.status = status as OrderStatus;
+      if (status === 'Completed') {
+        order.completedAt = new Date().toISOString();
+      }
       if (deliveryConfirmationImage) {
         order.deliveryConfirmationImage = deliveryConfirmationImage;
       }

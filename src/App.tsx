@@ -31,7 +31,9 @@ import {
   Store as StoreIcon,
   Map,
   Share2,
-  Copy
+  Copy,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 
 export default function App() {
@@ -47,6 +49,7 @@ export default function App() {
   const [phone, setPhone] = useState('');
   const [avatar, setAvatar] = useState('');
   const [signupRole, setSignupRole] = useState<'Customer' | 'Store Owner'>('Customer');
+  const [signupGender, setSignupGender] = useState<'Man' | 'Woman'>('Man');
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccess, setAuthSuccess] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
@@ -96,6 +99,18 @@ export default function App() {
 
   // SSE toast popup trigger
   const [toastMessage, setToastMessage] = useState<{ title: string; body: string } | null>(null);
+
+  // High volume active emergency/priority modal alert with automatic audio synthesizer loop
+  const [highVolumeAlert, setHighVolumeAlert] = useState<{
+    id: string;
+    type: 'order' | 'message' | 'completed';
+    title: string;
+    body: string;
+    storeName: string;
+    timestamp: string;
+  } | null>(null);
+  
+  const [isAlertMuted, setIsAlertMuted] = useState(false);
 
   // Sidebar mobile auto-hide 3 seconds rules
   useEffect(() => {
@@ -274,6 +289,52 @@ export default function App() {
     return () => clearInterval(intervalRef);
   }, [activeStore, currentUser]);
 
+  const playHighVolumeAlarm = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      
+      const playBeep = (startTime: number, frequency: number, duration: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc.type = 'sawtooth'; // Loud wave
+        osc.frequency.setValueAtTime(frequency, startTime);
+        
+        gain.gain.setValueAtTime(0.85, startTime); // High volume gain setting
+        gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration - 0.02);
+        
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        osc.start(startTime);
+        osc.stop(startTime + duration);
+      };
+      
+      const now = ctx.currentTime;
+      // High frequency warning sound pulses
+      playBeep(now, 980, 0.25);
+      playBeep(now + 0.35, 980, 0.25);
+      playBeep(now + 0.7, 1320, 0.45);
+    } catch (e) {
+      console.warn('Audio synthesis query blocked by interaction rules:', e);
+    }
+  };
+
+  // Recurrent sound player loop for unacknowledged critical alerts
+  useEffect(() => {
+    if (!highVolumeAlert || isAlertMuted) return;
+    
+    playHighVolumeAlarm();
+    
+    const alarmInterval = setInterval(() => {
+      playHighVolumeAlarm();
+    }, 2500); // sound triggers every 2.5 seconds
+    
+    return () => clearInterval(alarmInterval);
+  }, [highVolumeAlert, isAlertMuted]);
+
   // Real-time notification SSE listener
   useEffect(() => {
     const sse = new EventSource('/api/realtime');
@@ -286,15 +347,88 @@ export default function App() {
             title: 'Enterprise Dispatch Notice',
             body: `Order updates detected on store processing queues: Status changes log updated.`
           });
-        } else if (parsed.type === 'chat_received' && parsed.data.storeId === activeStore?.id) {
-          syncChatThread();
+
+          // Check if order trigger complies with role rules
+          if (parsed.type === 'order_placed' && parsed.data?.order) {
+            const orderObj = parsed.data.order;
+            const orderStoreId = orderObj.storeId;
+            const belongsToStore = currentUser && currentUser.storeId === orderStoreId;
+            const isMaster = currentUser && currentUser.role === 'Master Admin';
+
+            if (currentUser && (belongsToStore || isMaster)) {
+              const matchingStoreObj = stores.find(s => s.id === orderStoreId);
+              const storeName = matchingStoreObj ? matchingStoreObj.name : `Store #${orderStoreId}`;
+
+              setHighVolumeAlert({
+                id: orderObj.id || 'order-' + Date.now(),
+                type: 'order',
+                title: '🚨 NEW INCOMING ORDER RECEIVED',
+                body: `Invoice order placed by customer ${orderObj.customerName || 'AnonymousCustomer'}: status is pending dispatch.`,
+                storeName: storeName,
+                timestamp: new Date().toLocaleTimeString()
+              });
+              setIsAlertMuted(false);
+            }
+          } else if (parsed.type === 'order_status_updated' && parsed.data?.order) {
+            const orderObj = parsed.data.order;
+            if (orderObj.status === 'Completed') {
+              const orderStoreId = orderObj.storeId;
+              const belongsToStore = currentUser && currentUser.storeId === orderStoreId;
+              const isMaster = currentUser && currentUser.role === 'Master Admin';
+              const isStaff = currentUser && ['Master Admin', 'Store Owner', 'Store Staff', 'Admin'].includes(currentUser.role);
+
+              if (currentUser && isStaff && (belongsToStore || isMaster)) {
+                const matchingStoreObj = stores.find(s => s.id === orderStoreId);
+                const storeName = matchingStoreObj ? matchingStoreObj.name : `Store #${orderStoreId}`;
+
+                setHighVolumeAlert({
+                  id: orderObj.id || 'order-complete-' + Date.now(),
+                  type: 'completed',
+                  title: '✅ ORDER COMPLETED SUCCESSFULLY',
+                  body: `Order #${orderObj.id.slice(-6).toUpperCase()} for customer ${orderObj.customerName || 'Anonymous'} has been successfully checked out & completed.`,
+                  storeName: storeName,
+                  timestamp: new Date().toLocaleTimeString()
+                });
+                setIsAlertMuted(false);
+              }
+            }
+          }
+        } else if (parsed.type === 'chat_received') {
+          if (parsed.data?.storeId === activeStore?.id) {
+            syncChatThread();
+          }
+
+          const msgObj = parsed.data?.message;
+          const msgStoreId = parsed.data?.storeId;
+          const senderRole = msgObj?.senderRole;
+          const isFromCustomer = senderRole === 'Customer' || senderRole === 'Guest';
+
+          if (isFromCustomer && msgStoreId) {
+            const belongsToStore = currentUser && currentUser.storeId === msgStoreId;
+            const isMaster = currentUser && currentUser.role === 'Master Admin';
+
+            if (currentUser && (belongsToStore || isMaster)) {
+              const matchingStoreObj = stores.find(s => s.id === msgStoreId);
+              const storeName = matchingStoreObj ? matchingStoreObj.name : `Store #${msgStoreId}`;
+
+              setHighVolumeAlert({
+                id: msgObj.id || 'msg-' + Date.now(),
+                type: 'message',
+                title: '💬 URGENT CUSTOMER MESSAGE',
+                body: `"${msgObj.text || ''}" - sent by customer ${msgObj.senderName || 'Anonymous Guest'}`,
+                storeName: storeName,
+                timestamp: new Date().toLocaleTimeString()
+              });
+              setIsAlertMuted(false);
+            }
+          }
         }
       } catch (err) {
-        console.error(err);
+        console.error('SSE incoming packet decode error:', err);
       }
     };
     return () => sse.close();
-  }, [activeStore]);
+  }, [activeStore, currentUser, stores]);
 
   // Auth Operations
   const handleLogin = async (e: React.FormEvent) => {
@@ -349,6 +483,7 @@ export default function App() {
           password,
           phone,
           avatar,
+          gender: signupGender,
           role: signupRole
         })
       });
@@ -571,6 +706,60 @@ export default function App() {
             <button onClick={() => setToastMessage(null)} className="text-[10px] text-yellow-500 font-bold underline mt-2 block">
               Acknowledge
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* High Volume Priority Dispatch Alert Modal Overlay */}
+      {highVolumeAlert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md" id="priority-alert-modal">
+          <div className="bg-slate-900 border-2 border-red-500/80 rounded-3xl p-6 max-w-md w-full shadow-[0_0_50px_rgba(239,68,68,0.45)] relative text-center space-y-4 animate-pulse">
+            <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-500 mx-auto animate-bounce">
+              <Volume2 className="w-8 h-8" />
+            </div>
+            
+            <div className="space-y-1">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-red-400 px-3 py-1 bg-red-500/10 rounded-full border border-red-500/20">
+                {highVolumeAlert.type === 'order' && '🔔 Priority Store Dispatch Alert'}
+                {highVolumeAlert.type === 'message' && '💬 Urgent Customer Message'}
+                {highVolumeAlert.type === 'completed' && '✅ Confirmed Completed Order'}
+              </span>
+              <h2 className="text-lg font-extrabold text-white mt-1.5 leading-snug">{highVolumeAlert.title}</h2>
+              <p className="text-xs text-yellow-500 font-bold uppercase tracking-wider font-mono">Store Branch: {highVolumeAlert.storeName}</p>
+            </div>
+
+            <div className="p-4 bg-slate-955 border border-slate-800 rounded-2xl text-left">
+              <p className="text-xs text-slate-300 leading-relaxed font-mono">{highVolumeAlert.body}</p>
+              <div className="mt-3 pt-2 border-t border-slate-805/40 flex justify-between items-center text-[10px] text-slate-500 font-mono">
+                <span>Signal ref: {highVolumeAlert.id.slice(-6).toUpperCase()}</span>
+                <span>Logged at: {highVolumeAlert.timestamp}</span>
+              </div>
+            </div>
+
+            <div className="flex gap-2 justify-center items-center pt-2">
+              <button 
+                onClick={() => setIsAlertMuted(!isAlertMuted)} 
+                className={`p-3 rounded-xl border flex items-center gap-2 text-xs font-semibold shrink-0 select-none ${
+                  isAlertMuted 
+                    ? 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-300' 
+                    : 'bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20'
+                }`}
+                title={isAlertMuted ? "Unmute Alarm Sound" : "Mute Alarm Sound"}
+              >
+                {isAlertMuted ? <VolumeX className="w-4 h-4 text-slate-400" /> : <Volume2 className="w-4 h-4 text-red-500 animate-pulse" />}
+                {isAlertMuted ? 'Muted' : 'Mute'}
+              </button>
+              
+              <button 
+                onClick={() => {
+                  setHighVolumeAlert(null);
+                  setIsAlertMuted(false);
+                }} 
+                className="flex-grow py-3 bg-[#FFFF00] hover:bg-yellow-450 text-slate-950 font-black uppercase tracking-wider text-xs rounded-xl shadow-md cursor-pointer hover:shadow-yellow-500/15 active:scale-95 transition-all text-center"
+              >
+                Acknowledge Alert & Clear Alarm
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1020,6 +1209,30 @@ export default function App() {
                           onChange={(e) => setPhone(e.target.value)}
                           className="w-full bg-slate-950 border border-slate-800 rounded-lg h-10 px-3 text-xs text-slate-200 outline-none"
                         />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1 block">
+                      <label className="text-[10px] font-bold text-slate-400 tracking-wider block">GENDER IDENTIFICATION *</label>
+                      <div className="grid grid-cols-2 gap-2 mt-1">
+                        <button
+                          type="button"
+                          onClick={() => setSignupGender('Man')}
+                          className={`h-9 rounded-lg text-xs font-bold font-sans border transition-all cursor-pointer ${
+                            signupGender === 'Man' ? 'bg-yellow-500/10 border-yellow-500 text-yellow-500 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'
+                          }`}
+                        >
+                          ♂ Man
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSignupGender('Woman')}
+                          className={`h-9 rounded-lg text-xs font-bold font-sans border transition-all cursor-pointer ${
+                            signupGender === 'Woman' ? 'bg-yellow-500/10 border-yellow-500 text-yellow-500 font-bold' : 'bg-slate-950 border-slate-800 text-slate-400'
+                          }`}
+                        >
+                          ♀ Woman
+                        </button>
                       </div>
                     </div>
 

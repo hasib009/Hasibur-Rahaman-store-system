@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { User, Store, Product, Order, Message } from '../types.js';
+import { User, Store, Product, Order, Message, UserRole } from '../types.js';
 import { Shield, Home, Users, Store as StoreIcon, ShoppingBag, Plus, Map, MapPin, Check, X, Phone, Edit, UploadCloud, Barcode, Search, ShoppingCart, Trash2, MessageCircle, Clock, Camera } from 'lucide-react';
 import { BarcodeScannerModal } from './BarcodeScannerModal.js';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface AdminPanelProps {
   token: string | null;
@@ -52,6 +53,23 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
 
   // Edit Store State
   const [editingStoreId, setEditingStoreId] = useState<string | null>(null);
+
+  // User Search, Sub-tabs & Editing states for Master Admin
+  const [userSearchEmail, setUserSearchEmail] = useState('');
+  const [usersSubTab, setUsersSubTab] = useState<'staff' | 'customer'>('staff');
+  
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editUserUsername, setEditUserUsername] = useState('');
+  const [editUserEmail, setEditUserEmail] = useState('');
+  const [editUserPhone, setEditUserPhone] = useState('');
+  const [editUserGender, setEditUserGender] = useState<'Man' | 'Woman'>('Man');
+  const [editUserRole, setEditUserRole] = useState<UserRole>('Customer');
+  const [editUserPassword, setEditUserPassword] = useState('');
+  const [editUserStoreId, setEditUserStoreId] = useState<string>('');
+  
+  const [editUserError, setEditUserError] = useState<string | null>(null);
+  const [editUserSuccess, setEditUserSuccess] = useState<string | null>(null);
+  const [editUserLoading, setEditUserLoading] = useState(false);
 
   // Catalog Form State
   const [selectedCatalogStoreId, setSelectedCatalogStoreId] = useState('');
@@ -169,9 +187,20 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
     }
   };
 
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const [ordersFilterSubTab, setOrdersFilterSubTab] = useState<'all' | 'completed' | 'cancelled'>('all');
+
   useEffect(() => {
     fetchAllData();
   }, [token]);
+
+  useEffect(() => {
+    if (!autoRefreshEnabled || !token) return;
+    const interval = setInterval(() => {
+      fetchAllData();
+    }, 5000); // Poll and refresh every 5s if auto-refresh is toggled on
+    return () => clearInterval(interval);
+  }, [autoRefreshEnabled, token]);
 
   // S3 storagePut base64 simulated upload helper
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: 'store' | 'prod') => {
@@ -283,6 +312,63 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
       }
     } catch (err) {
       console.error('Failed user context bind maps', err);
+    }
+  };
+
+  const handleEditUserClick = (u: User) => {
+    setEditingUser(u);
+    setEditUserUsername(u.username);
+    setEditUserEmail(u.email);
+    setEditUserPhone(u.phone || '');
+    setEditUserGender(u.gender || 'Man');
+    setEditUserRole(u.role);
+    setEditUserStoreId(u.storeId || '');
+    setEditUserPassword('');
+    setEditUserError(null);
+    setEditUserSuccess(null);
+  };
+
+  const handleEditUserSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    setEditUserError(null);
+    setEditUserSuccess(null);
+    setEditUserLoading(true);
+
+    try {
+      const response = await fetch(`/api/admin/users/${editingUser.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          username: editUserUsername,
+          email: editUserEmail,
+          phone: editUserPhone,
+          gender: editUserGender,
+          role: editUserRole,
+          storeId: editUserStoreId || undefined,
+          password: editUserPassword || undefined
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to override user credentials.');
+      }
+
+      setEditUserSuccess(data.message || 'Credentials overridden permanently!');
+      await fetchAllData();
+      
+      // Close modal after success after a slight delay
+      setTimeout(() => {
+        setEditingUser(null);
+      }, 1000);
+    } catch (err: any) {
+      setEditUserError(err.message || 'Failed to modify database user record.');
+    } finally {
+      setEditUserLoading(false);
     }
   };
 
@@ -1168,7 +1254,7 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
           </div>
         )}
 
-        {/* WORKPLACE STAFF ACCESS CONTROLS MATRIX */}
+        {/* WORKSPACE STAFF ACCESS CONTROLS MATRIX */}
         {activeTab === 'users' && currentUser.role === 'Master Admin' && (
           <div className="space-y-6 text-left">
             {/* Owner Signup Approval Column */}
@@ -1186,7 +1272,7 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
                         <img src={p.avatar} alt={p.username} className="w-10 h-10 rounded-full bg-slate-800 border" />
                         <div>
                           <p className="font-bold text-white">{p.username}</p>
-                          <p className="text-xs text-slate-400">{p.email} • Tel: {p.phone}</p>
+                          <p className="text-xs text-slate-400">{p.email} • Tel: {p.phone} • {p.gender === 'Woman' ? '♀ Woman' : '♂ Man'}</p>
                         </div>
                       </div>
                       <div className="flex gap-2">
@@ -1209,77 +1295,169 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
               </div>
             )}
 
-            {/* System user mapped boundaries list */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-              <h4 className="font-sans font-bold text-white text-md border-b border-slate-800 pb-3">
-                Staff Assignment Matrix & Workplace Bindings
-              </h4>
+            {/* Segmented Users Control Panel Directory */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-5">
+              <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-4 gap-4">
+                <div>
+                  <h4 className="font-sans font-bold text-white text-md">
+                    System Directory Master Control
+                  </h4>
+                  <p className="text-xs text-slate-400 mt-1">Manage, approve, and fully override credential details of store owners, staff, and registered customer groups.</p>
+                </div>
 
+                {/* Sub Tab segmentation switcher button array */}
+                <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-850 gap-1 w-fit">
+                  <button
+                    onClick={() => setUsersSubTab('staff')}
+                    className={`px-4 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                      usersSubTab === 'staff' ? 'bg-yellow-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    💼 Store Owners & Staff
+                  </button>
+                  <button
+                    onClick={() => setUsersSubTab('customer')}
+                    className={`px-4 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                      usersSubTab === 'customer' ? 'bg-yellow-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    👥 Registered Customers
+                  </button>
+                </div>
+              </div>
+
+              {/* Email lookup search container bar */}
+              <div className="relative">
+                <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="🔍 Search users directory by email address..."
+                  value={userSearchEmail}
+                  onChange={(e) => setUserSearchEmail(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 focus:border-yellow-500 rounded-xl h-10 pl-10 pr-4 text-xs text-slate-200 outline-none transition-all"
+                />
+              </div>
+
+              {/* Users table registry container */}
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs text-slate-300">
                   <thead>
-                    <tr className="border-b border-slate-800 text-slate-500 font-semibold">
-                      <th className="py-2.5 px-3">Staff Profile</th>
-                      <th className="py-2.5 px-3">Role Type</th>
-                      <th className="py-2.5 px-3">Assigned Store</th>
-                      <th className="py-2.5 px-3 text-right">Context Override Control</th>
+                    <tr className="border-b border-slate-800 text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
+                      <th className="py-3 px-3">Profile Identity</th>
+                      <th className="py-3 px-3">Gender / Tel</th>
+                      <th className="py-3 px-3">Role Type</th>
+                      <th className="py-3 px-3">Assigned Location Context</th>
+                      <th className="py-3 px-3 text-right">Administrative Action Overrides</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800 pb-2">
-                    {users.map((u) => {
-                      if (u.role === 'Master Admin') return null; // skip overlord account
-                      return (
-                        <tr key={u.id} className="hover:bg-slate-950/20">
-                          <td className="py-3 px-3">
-                            <div className="flex items-center gap-2.5">
-                              <img src={u.avatar} alt={u.username} className="w-8 h-8 rounded-full object-cover shrink-0" />
+                  <tbody className="divide-y divide-slate-800">
+                    {users
+                      .filter((u) => {
+                        if (u.role === 'Master Admin') return false;
+                        
+                        // Email search filtering (case intensive check)
+                        const emailInput = userSearchEmail.toLowerCase().trim();
+                        if (emailInput && !u.email.toLowerCase().includes(emailInput)) {
+                          return false;
+                        }
+
+                        // Sub tab separation logic
+                        const isStaff = u.role !== 'Customer';
+                        return usersSubTab === 'staff' ? isStaff : !isStaff;
+                      })
+                      .map((u) => (
+                        <tr key={u.id} className="hover:bg-slate-950/25 transition-colors">
+                          <td className="py-3.5 px-3">
+                            <div className="flex items-center gap-3">
+                              <img src={u.avatar} alt={u.username} className="w-9 h-9 rounded-full object-cover border border-slate-800 bg-slate-950" />
                               <div>
-                                <p className="font-bold text-slate-100">{u.username}</p>
-                                <p className="text-[10px] text-slate-500 font-mono tracking-tighter">{u.email}</p>
+                                <p className="font-bold text-slate-100 flex items-center gap-1.5">
+                                  <span>{u.username}</span>
+                                  {u.id === currentUser.id && (
+                                    <span className="bg-slate-950 text-indigo-400 text-[8px] uppercase tracking-wider font-mono border border-indigo-900 px-1 py-0.2 rounded font-bold">You</span>
+                                  )}
+                                </p>
+                                <p className="text-[10px] text-slate-500 font-mono tracking-wide">{u.email}</p>
                               </div>
                             </div>
                           </td>
-                          <td className="py-3 px-3 text-slate-300 font-mono italic">
-                            {u.role}
+                          <td className="py-3.5 px-3">
+                            <p className="font-bold text-slate-300 text-[11px]">
+                              {u.gender === 'Woman' ? '♀ Woman' : '♂ Man'}
+                            </p>
+                            <p className="text-[10px] text-slate-500 font-mono">{u.phone || 'No phone recorded'}</p>
                           </td>
-                          <td className="py-3 px-3">
-                            {u.storeId ? (
-                              <span className="bg-slate-950 text-yellow-500 border border-yellow-500/10 font-bold px-2 py-1 rounded text-[10px] font-mono">
-                                {stores.find(s => s.id === u.storeId)?.name || u.storeId}
-                              </span>
+                          <td className="py-3.5 px-3">
+                            <span className="bg-slate-950 text-slate-350 border border-slate-800 text-[10px] uppercase font-bold font-mono py-1 px-2.5 rounded-lg">
+                              {u.role}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-3">
+                            {usersSubTab === 'staff' ? (
+                              <div className="space-y-1">
+                                {u.storeId ? (
+                                  <span className="bg-yellow-500/10 text-yellow-500 border border-yellow-500/15 font-bold px-2 py-0.5 rounded text-[10px] font-mono block w-fit">
+                                    {stores.find(s => s.id === u.storeId)?.name || u.storeId}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-500 italic text-[10px] block">No store context bound</span>
+                                )}
+                                
+                                <div className="flex items-center gap-1">
+                                  <select
+                                    value={u.storeId || ''}
+                                    onChange={(e) => handleMapUser(u.id, e.target.value || null, u.role)}
+                                    className="bg-slate-950 border border-slate-850 hover:border-slate-800 transition-colors rounded text-[9px] h-7 px-1.5 outline-none font-sans text-slate-400"
+                                  >
+                                    <option value="">[Not Assigned]</option>
+                                    {stores.map((s) => (
+                                      <option key={s.id} value={s.id}>{s.name}</option>
+                                    ))}
+                                  </select>
+
+                                  <select
+                                    value={u.role}
+                                    onChange={(e) => handleMapUser(u.id, u.storeId || null, e.target.value)}
+                                    className="bg-slate-950 border border-slate-850 hover:border-slate-800 transition-colors rounded text-[9px] h-7 px-1.5 outline-none font-sans text-slate-400"
+                                  >
+                                    <option value="Customer">Customer</option>
+                                    <option value="Store Staff">Store Staff</option>
+                                    <option value="Admin">Local Admin</option>
+                                    <option value="Store Owner">Store Owner</option>
+                                  </select>
+                                </div>
+                              </div>
                             ) : (
-                              <span className="text-slate-500 italic">No storefront bound</span>
+                              <span className="text-slate-400 text-[11px] font-mono italic max-w-[150px] truncate block" title={u.deliveryLocation}>
+                                {u.deliveryLocation || 'No physical address supplied'}
+                              </span>
                             )}
                           </td>
-                          <td className="py-3 px-3 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              {/* Workplace selector dropdown */}
-                              <select
-                                value={u.storeId || ''}
-                                onChange={(e) => handleMapUser(u.id, e.target.value || null, u.role)}
-                                className="bg-slate-950 border border-slate-850 rounded text-[10px] h-8 px-2.5 outline-none font-sans text-slate-300"
-                              >
-                                <option value="">[Not Assigned]</option>
-                                {stores.map((s) => (
-                                  <option key={s.id} value={s.id}>{s.name}</option>
-                                ))}
-                              </select>
-
-                              {/* Role selector dropdown */}
-                              <select
-                                value={u.role}
-                                onChange={(e) => handleMapUser(u.id, u.storeId || null, e.target.value)}
-                                className="bg-slate-950 border border-slate-850 rounded text-[10px] h-8 px-2.5 outline-none font-sans text-slate-300"
-                              >
-                                <option value="Customer">Customer</option>
-                                <option value="Store Staff">Store Staff</option>
-                                <option value="Admin">Local Admin</option>
-                              </select>
-                            </div>
+                          <td className="py-3.5 px-3 text-right">
+                            <button
+                              onClick={() => handleEditUserClick(u)}
+                              className="bg-slate-950 text-yellow-500 hover:text-slate-950 hover:bg-yellow-500 border border-yellow-500/15 text-[11px] font-bold px-3 py-1.5 rounded-lg transition-all flex items-center gap-1 justify-center ml-auto cursor-pointer"
+                            >
+                              <Edit className="w-3 h-3" />
+                              <span>Override Credentials</span>
+                            </button>
                           </td>
                         </tr>
-                      );
-                    })}
+                      ))}
+                    
+                    {users.filter((u) => {
+                      if (u.role === 'Master Admin') return false;
+                      const emailInput = userSearchEmail.toLowerCase().trim();
+                      if (emailInput && !u.email.toLowerCase().includes(emailInput)) return false;
+                      const isStaff = u.role !== 'Customer';
+                      return usersSubTab === 'staff' ? isStaff : !isStaff;
+                    }).length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="py-10 text-center italic text-slate-500">
+                          No customized record lists found in registry matching filters.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1504,133 +1682,330 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
 
         {/* WORKSPACE OUTLET ORDERS PANEL */}
         {activeTab === 'orders' && (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4 text-left">
-            <h4 className="font-sans font-bold text-white text-md border-b border-slate-800 pb-3 flex items-center justify-between">
-              <span>📋 ACTIVE ORDERS CONTROLLER</span>
-              <span className="text-xs font-mono text-slate-400 uppercase tracking-wider bg-slate-950 border border-white/5 px-2 py-0.5 rounded">Real-time update stream</span>
-            </h4>
+          <div className="space-y-6 text-left">
+            {/* Real-time statistics telemetry dashboard heading */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h4 className="font-sans font-bold text-white text-md flex items-center gap-2">
+                  <span>📊 Real-time Order Analytics & Statistics Panel</span>
+                </h4>
+                <p className="text-xs text-slate-400 mt-1">Live metrics and daily volume statistics for active storefront locations.</p>
+              </div>
 
-            {orders.length === 0 ? (
-              <p className="text-xs text-slate-500 py-10 text-center italic">No active order records listed in workspace context.</p>
-            ) : (
-              <div className="space-y-4 max-h-[600px] overflow-y-auto pr-1">
-                {orders.map((o) => (
-                  <div key={o.id} className="bg-slate-950 border border-slate-850 p-5 rounded-2xl space-y-4 shadow-sm transition-all">
-                    <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
-                      <div className="space-y-2 flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2.5">
-                          <span className="font-mono text-yellow-500 font-bold">#{o.id.slice(-6).toUpperCase()}</span>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
-                            o.status === 'Pending' ? 'bg-amber-900/35 text-amber-400 border border-amber-800/40' :
-                            o.status === 'Confirmed' ? 'bg-sky-950 text-sky-400 border border-sky-850' :
-                            o.status === 'Preparing' ? 'bg-indigo-950 text-indigo-400 border border-indigo-850' :
-                            o.status === 'Ready' ? 'bg-purple-950 text-purple-400 border border-purple-850' :
-                            o.status === 'Completed' ? 'bg-emerald-950 text-emerald-400 border border-emerald-850' :
-                            'bg-red-950 text-red-400 border border-red-850'
-                          }`}>
-                            {o.status}
-                          </span>
-                          <span className="text-[10px] bg-slate-900 px-2 py-0.5 rounded text-indigo-300 font-mono">
-                            {o.type} ({o.timeSlot})
-                          </span>
-                        </div>
-                        
-                        <div className="space-y-1">
-                          <p className="text-xs font-bold text-slate-200">Customer: {o.customerName} ({o.customerPhone})</p>
-                          {o.type === 'Delivery' && <p className="text-[11px] text-slate-400">Address: {o.deliveryAddress}</p>}
-                        </div>
+              {/* LIVE AUTO REFRESH TOGGLE */}
+              <div className="flex items-center gap-2 bg-slate-950 px-3.5 py-1.5 rounded-xl border border-slate-850 w-fit shrink-0">
+                <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">
+                  {autoRefreshEnabled ? '🟢 Live Auto-Refresh Active (5s)' : '⚪ Auto-Refresh Paused'}
+                </span>
+                <button
+                  onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+                  className={`w-10 h-5 rounded-full p-0.5 transition-colors cursor-pointer relative ${
+                    autoRefreshEnabled ? 'bg-yellow-500' : 'bg-slate-800'
+                  }`}
+                >
+                  <div
+                    className={`w-4 h-4 bg-slate-950 rounded-full shadow-md transform transition-transform ${
+                      autoRefreshEnabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
 
-                        <div className="border-t border-slate-900 pt-2 space-y-1">
-                          {o.items.map((item, idx) => (
-                            <p key={idx} className="text-[11px] text-slate-300 font-mono">
-                              {item.name} x {item.quantity} (unit price: €{item.price.toFixed(2)})
-                            </p>
-                          ))}
-                          <p className="text-xs font-bold text-yellow-500 font-mono mt-1">Total Price: €{o.totalPrice.toFixed(2)}</p>
-                        </div>
+            {/* Metrics counting grids */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-slate-900 border border-slate-800 p-4.5 rounded-2xl text-left shadow-sm">
+                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-mono block font-bold">Pending Actions</span>
+                <span className="text-3xl font-black text-amber-400 font-mono mt-1.5 block">
+                  {orders.filter(o => (currentUser.role === 'Master Admin' || currentUser.storeId === o.storeId) && o.status === 'Pending').length}
+                </span>
+                <span className="text-[9px] text-slate-500 mt-1 block">Awaiting physical setup</span>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 p-4.5 rounded-2xl text-left shadow-sm">
+                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-mono block font-bold">Completed Count</span>
+                <span className="text-3xl font-black text-emerald-400 font-mono mt-1.5 block">
+                  {orders.filter(o => (currentUser.role === 'Master Admin' || currentUser.storeId === o.storeId) && o.status === 'Completed').length}
+                </span>
+                <span className="text-[9px] text-slate-500 mt-1 block">Placed & Dispatched</span>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 p-4.5 rounded-2xl text-left shadow-sm">
+                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-mono block font-bold">Cancelled Status</span>
+                <span className="text-3xl font-black text-red-500 font-mono mt-1.5 block">
+                  {orders.filter(o => (currentUser.role === 'Master Admin' || currentUser.storeId === o.storeId) && o.status === 'Cancelled').length}
+                </span>
+                <span className="text-[9px] text-slate-500 mt-1 block">Voided or Rejected metrics</span>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 p-4.5 rounded-2xl text-left shadow-sm">
+                <span className="text-[10px] text-slate-400 uppercase tracking-widest font-mono block font-bold">Total Orders</span>
+                <span className="text-3xl font-black text-indigo-400 font-mono mt-1.5 block">
+                  {orders.filter(o => (currentUser.role === 'Master Admin' || currentUser.storeId === o.storeId)).length}
+                </span>
+                <span className="text-[9px] text-slate-500 mt-1 block">System records count</span>
+              </div>
+            </div>
 
-                        {/* delivery confirmation profile */}
-                        {o.deliveryConfirmationImage && (
-                          <div className="pt-2">
-                            <span className="text-[10px] text-slate-500 font-mono uppercase block mb-1">Delivery Drop Photo Profile</span>
-                            <img src={o.deliveryConfirmationImage} alt="Delivery Drop Confirmation" className="w-16 h-16 object-cover bg-slate-900 rounded border border-white/5" />
-                          </div>
-                        )}
-                      </div>
+            {/* Timed interval counting breakdown metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-slate-900 border border-slate-850 p-4 rounded-xl text-left">
+                <span className="text-[10px] text-indigo-400 uppercase tracking-widest font-mono block font-bold">Received Today</span>
+                <span className="text-xl font-black text-white font-mono mt-1 block">
+                  {orders.filter(o => (currentUser.role === 'Master Admin' || currentUser.storeId === o.storeId) && (Date.now() - new Date(o.createdAt).getTime() < 24 * 60 * 60 * 1000)).length} orders
+                </span>
+                <p className="text-[9px] text-slate-500 mt-1 leading-snug">Orders placed within the past 24 hourly periods strictly.</p>
+              </div>
+              <div className="bg-slate-900 border border-slate-850 p-4 rounded-xl text-left">
+                <span className="text-[10px] text-indigo-400 uppercase tracking-widest font-mono block font-bold">Received This Week</span>
+                <span className="text-xl font-black text-white font-mono mt-1 block">
+                  {orders.filter(o => (currentUser.role === 'Master Admin' || currentUser.storeId === o.storeId) && (Date.now() - new Date(o.createdAt).getTime() < 7 * 24 * 60 * 60 * 1000)).length} orders
+                </span>
+                <p className="text-[9px] text-slate-500 mt-1 leading-snug">Orders placed within the past 7 active calendar days.</p>
+              </div>
+              <div className="bg-slate-900 border border-slate-850 p-4 rounded-xl text-left">
+                <span className="text-[10px] text-indigo-400 uppercase tracking-widest font-mono block font-bold">Received This Month</span>
+                <span className="text-xl font-black text-white font-mono mt-1 block">
+                  {orders.filter(o => (currentUser.role === 'Master Admin' || currentUser.storeId === o.storeId) && (Date.now() - new Date(o.createdAt).getTime() < 30 * 24 * 60 * 60 * 1000)).length} orders
+                </span>
+                <p className="text-[9px] text-slate-500 mt-1 leading-snug">Orders placed within the past 30 active calendar days.</p>
+              </div>
+            </div>
 
-                      <div className="text-left lg:text-right shrink-0">
-                        <span className="text-[10px] text-slate-500 font-mono block mb-1.5 uppercase">Update Status Workflow</span>
-                        <div className="flex gap-1 flex-wrap justify-start lg:justify-end max-w-sm">
-                          {(['Pending', 'Confirmed', 'Preparing', 'Ready', 'Completed', 'Cancelled'] as const).map((status) => (
-                            <button
-                              key={status}
-                              onClick={() => handleOrderStatusOverride(o.id, status)}
-                              className={`px-2.5 py-1 text-[9px] font-mono font-bold border rounded transition-all cursor-pointer ${
-                                o.status === status
-                                  ? 'bg-[#FFFF00] text-slate-950 border-yellow-500 font-bold shadow-sm'
-                                  : 'bg-slate-950 text-slate-400 border-slate-850 hover:border-slate-500 hover:text-white'
-                              }`}
-                            >
-                              {status}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
+            {/* Daily Order Volume Recharts Bar Chart */}
+            <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl space-y-4 shadow-xl">
+              <h5 className="text-xs font-bold text-slate-300 font-sans uppercase tracking-wider flex items-center gap-1.5">
+                <span>📊 Weekly Dispatch Timeline (Orders received per day over last week)</span>
+              </h5>
+              <div className="h-60 w-full pt-1">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={Array.from({ length: 7 }).map((_, idx) => {
+                      const d = new Date();
+                      d.setDate(d.getDate() - (6 - idx));
+                      const dateKey = d.toDateString();
+                      const dayStr = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+                      
+                      const count = orders.filter((o) => {
+                        if (currentUser.role !== 'Master Admin' && currentUser.storeId !== o.storeId) {
+                          return false;
+                        }
+                        return new Date(o.createdAt).toDateString() === dateKey;
+                      }).length;
 
-                    {/* Chat communication area */}
-                    <div className="border-t border-slate-900/60 pt-3">
-                      <button
-                        onClick={() => setChattingOrderId(chattingOrderId === o.id ? null : o.id)}
-                        className="flex items-center gap-2 text-[10px] font-bold uppercase transition-all py-1.5 px-3 rounded-lg bg-slate-900 hover:bg-slate-850 text-yellow-500 cursor-pointer"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        {chattingOrderId === o.id ? 'Close dialogue communication log' : `Send message / Communicate with customer ${o.customerName}`}
-                      </button>
+                      return {
+                        name: dayStr,
+                        Orders: count
+                      };
+                    })}
+                    margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                    <XAxis dataKey="name" stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} allowDecimals={false} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px' }}
+                      labelStyle={{ color: '#94a3b8', fontSize: '11px', fontWeight: 'bold' }}
+                      itemStyle={{ color: '#e2e8f0', fontSize: '11px' }}
+                    />
+                    <Bar dataKey="Orders" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={28} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
 
-                      {chattingOrderId === o.id && (
-                        <div className="mt-3 bg-slate-950/80 border border-slate-850 rounded-xl p-3.5 space-y-3">
-                          <p className="text-[10px] text-slate-400 font-mono tracking-tight">
-                            Communication thread mapped session customer reference: <span className="text-yellow-500 font-bold font-mono">{o.customerId}</span>
-                          </p>
-                          <div className="max-h-[165px] overflow-y-auto space-y-2 pr-1 text-xs">
-                            {activeOrderMessages.length === 0 ? (
-                              <p className="text-slate-600 italic text-center py-4 text-xs">No prior conversation history recorded inside workspace. Try sending a message below.</p>
-                            ) : (
-                              activeOrderMessages.map((msg) => {
-                                const isCustomer = msg.senderRole === 'Customer' || msg.senderRole === 'Guest';
-                                return (
-                                  <div key={msg.id} className={`flex flex-col max-w-[85%] ${!isCustomer ? 'ml-auto text-right items-end' : 'mr-auto text-left items-start'}`}>
-                                    <span className="text-[8px] text-slate-550 font-mono font-bold uppercase">{msg.senderName} ({msg.senderRole})</span>
-                                    <div className={`p-2.5 rounded-xl mt-0.5 leading-snug ${!isCustomer ? 'bg-[#FFFF00] text-slate-950 font-semibold rounded-tr-xs shadow-xs' : 'bg-slate-900 border border-slate-850/50 text-slate-200 rounded-tl-xs'}`}>
-                                      {msg.text}
-                                    </div>
-                                  </div>
-                                );
-                              })
+            {/* Orders listing segment layout */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-3.5 gap-4">
+                <h5 className="font-sans font-bold text-white text-md">
+                  Active Dispatch Queue
+                </h5>
+
+                {/* Switcher tabs for segmented workflow states */}
+                <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-850 gap-1 w-fit">
+                  <button
+                    onClick={() => setOrdersFilterSubTab('all')}
+                    className={`px-3.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                      ordersFilterSubTab === 'all' ? 'bg-yellow-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    ⚡ Active Queue
+                  </button>
+                  <button
+                    onClick={() => setOrdersFilterSubTab('completed')}
+                    className={`px-3.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                      ordersFilterSubTab === 'completed' ? 'bg-yellow-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    ✓ Completed (Past 24 Hours)
+                  </button>
+                  <button
+                    onClick={() => setOrdersFilterSubTab('cancelled')}
+                    className={`px-3.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                      ordersFilterSubTab === 'cancelled' ? 'bg-yellow-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    ⚠ Cancelled Listings
+                  </button>
+                </div>
+              </div>
+
+              {orders.filter((o) => {
+                if (currentUser.role !== 'Master Admin' && currentUser.storeId !== o.storeId) {
+                  return false;
+                }
+                if (ordersFilterSubTab === 'all') {
+                  return o.status !== 'Completed' && o.status !== 'Cancelled';
+                } else if (ordersFilterSubTab === 'completed') {
+                  if (o.status !== 'Completed') return false;
+                  if (!o.completedAt) return true;
+                  const completedTime = new Date(o.completedAt).getTime();
+                  return Date.now() - completedTime < 24 * 60 * 60 * 1000; // Less than 24 hrs
+                } else {
+                  return o.status === 'Cancelled';
+                }
+              }).length === 0 ? (
+                <p className="text-xs text-slate-500 py-12 text-center italic bg-slate-950/20 rounded-xl border border-dashed border-slate-800">
+                  No order records exist matching the {ordersFilterSubTab === 'completed' ? 'Completed (Last 24 Hours)' : ordersFilterSubTab === 'cancelled' ? 'Cancelled' : 'Active'} category queue limits.
+                </p>
+              ) : (
+                <div className="space-y-4 max-h-[600px] overflow-y-auto pr-1">
+                  {orders
+                    .filter((o) => {
+                      if (currentUser.role !== 'Master Admin' && currentUser.storeId !== o.storeId) {
+                        return false;
+                      }
+                      if (ordersFilterSubTab === 'all') {
+                        return o.status !== 'Completed' && o.status !== 'Cancelled';
+                      } else if (ordersFilterSubTab === 'completed') {
+                        if (o.status !== 'Completed') return false;
+                        if (!o.completedAt) return true;
+                        const completedTime = new Date(o.completedAt).getTime();
+                        return Date.now() - completedTime < 24 * 60 * 60 * 1000;
+                      } else {
+                        return o.status === 'Cancelled';
+                      }
+                    })
+                    .map((o) => (
+                      <div key={o.id} className="bg-slate-950 border border-slate-850 p-5 rounded-xl space-y-4 shadow-sm transition-all">
+                        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                          <div className="space-y-2 flex-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2.5">
+                              <span className="font-mono text-yellow-500 font-bold">#{o.id.slice(-6).toUpperCase()}</span>
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
+                                o.status === 'Pending' ? 'bg-amber-900/35 text-amber-400 border border-amber-800/40' :
+                                o.status === 'Confirmed' ? 'bg-sky-950 text-sky-400 border border-sky-850' :
+                                o.status === 'Preparing' ? 'bg-indigo-950 text-indigo-400 border border-indigo-850' :
+                                o.status === 'Ready' ? 'bg-purple-950 text-purple-400 border border-purple-850' :
+                                o.status === 'Completed' ? 'bg-emerald-950 text-emerald-400 border border-emerald-850' :
+                                'bg-red-950 text-red-400 border border-red-850'
+                              }`}>
+                                {o.status}
+                              </span>
+                              <span className="text-[10px] bg-slate-900 px-2 py-0.5 rounded text-indigo-300 font-mono">
+                                {o.type} ({o.timeSlot})
+                              </span>
+                              {o.completedAt && (
+                                <span className="text-[9px] text-emerald-450 font-mono">
+                                  ✓ Completed At: {new Date(o.completedAt).toLocaleTimeString()}
+                                </span>
+                              )}
+                            </div>
+                            
+                            <div className="space-y-1">
+                              <p className="text-xs font-bold text-slate-250">Customer: {o.customerName} ({o.customerPhone})</p>
+                              {o.type === 'Delivery' && <p className="text-[11px] text-slate-400">Address Location: {o.deliveryAddress}</p>}
+                            </div>
+
+                            <div className="border-t border-slate-900 pt-2 space-y-1">
+                              {o.items.map((item, idx) => (
+                                <p key={idx} className="text-[11px] text-slate-300 font-mono">
+                                  {item.name} x {item.quantity} (unit price: €{item.price.toFixed(2)})
+                                </p>
+                              ))}
+                              <p className="text-xs font-bold text-yellow-500 font-mono mt-1">Total Paid Value: €{o.totalPrice.toFixed(2)}</p>
+                            </div>
+
+                            {/* delivery confirmation profile */}
+                            {o.deliveryConfirmationImage && (
+                              <div className="pt-2">
+                                <span className="text-[10px] text-slate-500 font-mono uppercase block mb-1">Delivery Drop Photo Profile</span>
+                                <img src={o.deliveryConfirmationImage} alt="Delivery Drop Confirmation" className="w-16 h-16 object-cover bg-slate-900 rounded border border-white/5" />
+                              </div>
                             )}
                           </div>
 
-                          <form onSubmit={(e) => handleSendAdminChatMessage(e, o)} className="flex gap-2 pt-1 border-t border-slate-900">
-                            <input
-                              type="text"
-                              required
-                              placeholder={`Type chat message logs for ${o.customerName}...`}
-                              value={adminChatText}
-                              onChange={(e) => setAdminChatText(e.target.value)}
-                              className="w-full bg-slate-900 border border-slate-800 rounded-lg h-9 px-3 text-xs text-slate-250 outline-none focus:border-yellow-500 font-sans"
-                            />
-                            <button type="submit" className="bg-[#FFFF00] hover:bg-yellow-400 text-slate-950 font-black text-xs px-4 rounded-lg cursor-pointer transition-colors shrink-0">
-                              Transmit Message
-                            </button>
-                          </form>
+                          <div className="text-left lg:text-right shrink-0">
+                            <span className="text-[10px] text-slate-500 font-mono block mb-1.5 uppercase">Update Status Workflow</span>
+                            <div className="flex gap-1 flex-wrap justify-start lg:justify-end max-w-sm">
+                              {(['Pending', 'Confirmed', 'Preparing', 'Ready', 'Completed', 'Cancelled'] as const).map((status) => (
+                                <button
+                                  key={status}
+                                  onClick={() => handleOrderStatusOverride(o.id, status)}
+                                  className={`px-2.5 py-1 text-[9px] font-mono font-bold border rounded transition-all cursor-pointer ${
+                                    o.status === status
+                                      ? 'bg-[#FFFF00] text-slate-950 border-yellow-500 font-bold shadow-sm'
+                                      : 'bg-slate-950 text-slate-400 border-slate-850 hover:border-slate-500 hover:text-white'
+                                  }`}
+                                >
+                                  {status}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+
+                        {/* Chat communication area */}
+                        <div className="border-t border-slate-900/60 pt-3">
+                          <button
+                            onClick={() => setChattingOrderId(chattingOrderId === o.id ? null : o.id)}
+                            className="flex items-center gap-2 text-[10px] font-bold uppercase transition-all py-1.5 px-3 rounded-lg bg-slate-900 hover:bg-slate-850 text-yellow-500 cursor-pointer"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                            {chattingOrderId === o.id ? 'Close dialogue communication log' : `Send message / Communicate with customer ${o.customerName}`}
+                          </button>
+
+                          {chattingOrderId === o.id && (
+                            <div className="mt-3 bg-slate-950/80 border border-slate-850 rounded-xl p-3.5 space-y-3">
+                              <p className="text-[10px] text-slate-400 font-mono tracking-tight">
+                                Communication thread mapped session customer reference: <span className="text-yellow-500 font-bold font-mono">{o.customerId}</span>
+                              </p>
+                              <div className="max-h-[165px] overflow-y-auto space-y-2 pr-1 text-xs">
+                                {activeOrderMessages.length === 0 ? (
+                                  <p className="text-slate-600 italic text-center py-4 text-xs">No prior conversation history recorded inside workspace. Try sending a message below.</p>
+                                ) : (
+                                  activeOrderMessages.map((msg) => {
+                                    const isCustomer = msg.senderRole === 'Customer' || msg.senderRole === 'Guest';
+                                    return (
+                                      <div key={msg.id} className={`flex flex-col max-w-[85%] ${!isCustomer ? 'ml-auto text-right items-end' : 'mr-auto text-left items-start'}`}>
+                                        <span className="text-[8px] text-slate-550 font-mono font-bold uppercase">{msg.senderName} ({msg.senderRole})</span>
+                                        <div className={`p-2.5 rounded-xl mt-0.5 leading-snug ${!isCustomer ? 'bg-[#FFFF00] text-slate-950 font-semibold rounded-tr-xs shadow-xs' : 'bg-slate-900 border border-slate-850/50 text-slate-200 rounded-tl-xs'}`}>
+                                          {msg.text}
+                                        </div>
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
+
+                              <form onSubmit={(e) => handleSendAdminChatMessage(e, o)} className="flex gap-2 pt-1 border-t border-slate-900">
+                                <input
+                                  type="text"
+                                  required
+                                  placeholder={`Type chat message logs for ${o.customerName}...`}
+                                  value={adminChatText}
+                                  onChange={(e) => setAdminChatText(e.target.value)}
+                                  className="w-full bg-slate-900 border border-slate-800 rounded-lg h-9 px-3 text-xs text-slate-250 outline-none focus:border-yellow-500 font-sans"
+                                />
+                                <button type="submit" className="bg-[#FFFF00] hover:bg-yellow-400 text-slate-950 font-black text-xs px-4 rounded-lg cursor-pointer transition-colors shrink-0">
+                                  Transmit Message
+                                </button>
+                              </form>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -1684,6 +2059,139 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
         onScanSuccess={handleDirectBarcodeScan}
         title="POS Selling Barcode Reader"
       />
+
+      {/* Editing User Override overlay modal */}
+      {editingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4 text-left">
+            <h3 className="font-sans font-bold text-white text-lg border-b border-slate-800 pb-3 flex items-center justify-between">
+              <span>🔧 Override Credentials</span>
+              <button onClick={() => setEditingUser(null)} className="text-slate-400 hover:text-white transition-colors cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </h3>
+
+            {editUserError && (
+              <div className="bg-red-500/10 border border-red-500/30 text-red-200 text-xs p-3 rounded-lg font-mono">
+                ⚠ {editUserError}
+              </div>
+            )}
+
+            {editUserSuccess && (
+              <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-200 text-xs p-3 rounded-lg font-mono">
+                ✓ {editUserSuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleEditUserSubmit} className="space-y-4">
+              <div className="space-y-1 block">
+                <label className="text-[10px] font-bold text-slate-400 tracking-wider">FULL DISPLAY USERNAME</label>
+                <input
+                  type="text"
+                  required
+                  value={editUserUsername}
+                  onChange={(e) => setEditUserUsername(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg h-10 px-3 text-xs text-slate-200 outline-none focus:border-yellow-500"
+                />
+              </div>
+
+              <div className="space-y-1 block">
+                <label className="text-[10px] font-bold text-slate-400 tracking-wider">GMAIL ACCOUNT ADDRESS</label>
+                <input
+                  type="email"
+                  required
+                  value={editUserEmail}
+                  onChange={(e) => setEditUserEmail(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg h-10 px-3 text-xs text-slate-200 outline-none focus:border-yellow-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1 block">
+                  <label className="text-[10px] font-bold text-slate-400 tracking-wider">PHONE NUMBER</label>
+                  <input
+                    type="text"
+                    required
+                    value={editUserPhone}
+                    onChange={(e) => setEditUserPhone(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg h-10 px-3 text-xs text-slate-200 outline-none focus:border-yellow-500"
+                  />
+                </div>
+
+                <div className="space-y-1 block">
+                  <label className="text-[10px] font-bold text-slate-400 tracking-wider">GENDER</label>
+                  <select
+                    value={editUserGender}
+                    onChange={(e) => setEditUserGender(e.target.value as 'Man' | 'Woman')}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg h-10 px-3 text-xs text-slate-250 outline-none"
+                  >
+                    <option value="Man">♂ Man</option>
+                    <option value="Woman">♀ Woman</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1 block">
+                <label className="text-[10px] font-bold text-slate-400 tracking-wider">SET NEW PASSWORD</label>
+                <input
+                  type="password"
+                  placeholder="Leave empty to maintain password"
+                  value={editUserPassword}
+                  onChange={(e) => setEditUserPassword(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg h-10 px-3 text-xs text-slate-200 outline-none focus:border-yellow-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1 block">
+                  <label className="text-[10px] font-bold text-slate-400 tracking-wider">ROLE TYPE</label>
+                  <select
+                    value={editUserRole}
+                    onChange={(e) => setEditUserRole(e.target.value as any)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg h-10 px-3 text-xs text-slate-200 outline-none"
+                  >
+                    <option value="Customer">Customer</option>
+                    <option value="Store Staff">Store Staff</option>
+                    <option value="Admin">Local Admin</option>
+                    <option value="Store Owner">Store Owner</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1 block">
+                  <label className="text-[10px] font-bold text-slate-400 tracking-wider">ASSIGNED STORE</label>
+                  <select
+                    value={editUserStoreId}
+                    onChange={(e) => setEditUserStoreId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg h-10 px-3 text-xs text-slate-200 outline-none"
+                  >
+                    <option value="">[Not Assigned]</option>
+                    {stores.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingUser(null)}
+                  className="bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-400 font-semibold px-4 py-2 rounded-lg text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editUserLoading}
+                  className="bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-bold px-5 py-2 rounded-lg text-xs uppercase transition-all tracking-wider"
+                >
+                  {editUserLoading ? 'Overriding...' : 'Apply Overrides'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
