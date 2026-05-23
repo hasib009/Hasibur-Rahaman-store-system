@@ -39,11 +39,6 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
   const [posError, setPosError] = useState<string | null>(null);
   const [posSuccess, setPosSuccess] = useState<string | null>(null);
 
-  // Quick Scan Mode configuration states
-  const [quickScanMode, setQuickScanMode] = useState<boolean>(false);
-  const [quickScanIn, setQuickScanIn] = useState('');
-  const quickScanInputRef = React.useRef<HTMLInputElement>(null);
-
   // Store Form State
   const [storeName, setStoreName] = useState('');
   const [storeDesc, setStoreDesc] = useState('');
@@ -147,34 +142,6 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
   useEffect(() => {
     fetchAllData();
   }, [token]);
-
-  // Handle Quick Scan auto-focus and click redirect
-  useEffect(() => {
-    if (quickScanMode && activeTab === 'pos') {
-      const focusInput = () => {
-        quickScanInputRef.current?.focus();
-      };
-      
-      // Delay so elements have rendered
-      const timeout = setTimeout(focusInput, 150);
-      
-      window.addEventListener('click', focusInput);
-      return () => {
-        clearTimeout(timeout);
-        window.removeEventListener('click', focusInput);
-      };
-    }
-  }, [quickScanMode, activeTab]);
-
-  // Auto-dismiss barcode POS success notifications after 1.5 seconds
-  useEffect(() => {
-    if (posSuccess) {
-      const timer = setTimeout(() => {
-        setPosSuccess(null);
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [posSuccess]);
 
   // S3 storagePut base64 simulated upload helper
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: 'store' | 'prod') => {
@@ -428,38 +395,31 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
     }
   };
 
-  const processBarcode = (code: string) => {
+  const handleBarcodeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
     setPosError(null);
     setPosSuccess(null);
     
-    if (!code) return false;
+    const code = posBarcodeIn.trim();
+    if (!code) return;
 
     const storeIdToUse = currentUser.role === 'Master Admin' ? selectedCatalogStoreId : currentUser.storeId;
     if (!storeIdToUse) {
       setPosError('No active storefront bound to your staff account.');
-      return false;
+      return;
     }
 
     const matched = products.find(p => p.storeId === storeIdToUse && p.barcode === code);
     if (matched) {
       if (matched.stock <= 0) {
         setPosError(`"${matched.name}" matches barcode [${code}] but is completely out of stock!`);
-        return false;
+        return;
       }
       addPosItem(matched, 1);
       setPosSuccess(`Successfully added scanned item: "${matched.name}"`);
-      return true;
+      setPosBarcodeIn('');
     } else {
       setPosError(`Unassigned Barcode: No product with barcode "${code}" exists for this store.`);
-      return false;
-    }
-  };
-
-  const handleBarcodeSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const code = posBarcodeIn.trim();
-    if (processBarcode(code)) {
-      setPosBarcodeIn('');
     }
   };
 
@@ -600,86 +560,18 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
             
             {/* Left columns: Scanners & Name query searches */}
             <div className="lg:col-span-2 space-y-6">
-                         {/* Box 1: Simulated Laser Barcode Scanner */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4 relative overflow-hidden">
+              
+              {/* Box 1: Simulated Laser Barcode Scanner */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                   <h4 className="font-sans font-bold text-white text-sm uppercase flex items-center gap-2">
                     <Barcode className="w-5 h-5 text-yellow-500" />
                     Simulated Laser Barcode Scanner
                   </h4>
-                  <span className={`text-[9px] font-mono font-bold tracking-widest px-2 py-0.5 rounded border ${
-                    quickScanMode 
-                      ? 'text-[#FFFF00] bg-yellow-500/10 border-yellow-500/30 animate-pulse'
-                      : 'text-emerald-400 bg-emerald-950/45 border-emerald-800/30'
-                  }`}>
-                    {quickScanMode ? 'QUICK SCAN ON' : 'SCANNER READY'}
+                  <span className="text-[9px] font-mono font-bold tracking-widest text-emerald-400 bg-emerald-950/45 px-2 py-0.5 rounded border border-emerald-800/30">
+                    SCANNER READY
                   </span>
                 </div>
-
-                {/* Quick Scan Workflow Toggle Bar */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-950 p-4 rounded-xl border border-slate-850">
-                  <div className="text-left">
-                    <p className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                      <span className={`inline-block w-2.5 h-2.5 rounded-full ${quickScanMode ? 'bg-[#FFFF00] animate-ping' : 'bg-slate-700'}`} />
-                      ⚡ Continuous Quick Scan Mode
-                    </p>
-                    <p className="text-[10px] text-slate-400 mt-1 leading-snug">
-                      {quickScanMode 
-                        ? "Active: Clicks & physical barcode scanner inputs automatically focus and input." 
-                        : "Inactive: Keyboard barcode input must be manual."
-                      }
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = !quickScanMode;
-                      setQuickScanMode(next);
-                      if (next) {
-                        setQuickScanIn('');
-                        setTimeout(() => quickScanInputRef.current?.focus(), 150);
-                      }
-                    }}
-                    className={`px-4 py-2 rounded-xl text-[10px] uppercase font-bold transition-all cursor-pointer border ${
-                      quickScanMode 
-                        ? 'bg-[#FFFF00] border-yellow-500 text-slate-950 shadow-[0_0_12px_rgba(255,255,0,0.2)]'
-                        : 'bg-slate-900 border-slate-800 text-slate-450 hover:text-white'
-                    }`}
-                  >
-                    {quickScanMode ? 'Enabled' : 'Disabled'}
-                  </button>
-                </div>
-
-                {/* Continuous Hidden Barcode Scanner */}
-                {quickScanMode && (
-                  <form 
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      const code = quickScanIn.trim();
-                      if (code) {
-                        processBarcode(code);
-                        setQuickScanIn('');
-                      }
-                    }} 
-                    className="absolute opacity-0 pointer-events-none"
-                    style={{ position: 'absolute', left: '-2000px', top: '-2000px' }}
-                  >
-                    <input
-                      ref={quickScanInputRef}
-                      type="text"
-                      value={quickScanIn}
-                      onChange={(e) => setQuickScanIn(e.target.value)}
-                      onBlur={() => {
-                        if (quickScanMode && activeTab === 'pos') {
-                          setTimeout(() => {
-                            quickScanInputRef.current?.focus();
-                          }, 100);
-                        }
-                      }}
-                      className="w-1 h-1 bg-transparent border-none outline-none"
-                    />
-                  </form>
-                )}
 
                 {posError && (
                   <div className="bg-red-500/10 border border-red-500/30 text-red-200 text-xs p-3.5 rounded-lg font-mono">
@@ -687,18 +579,14 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
                   </div>
                 )}
                 {posSuccess && (
-                  <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-200 text-xs p-3.5 rounded-lg font-mono flex items-center justify-between">
-                    <span>✓ {posSuccess}</span>
-                    <span className="text-[8px] uppercase tracking-wider text-emerald-400 font-bold bg-emerald-950 px-1 py-0.5 rounded ml-2 animate-pulse">Auto-dismiss 1.5s</span>
+                  <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-200 text-xs p-3.5 rounded-lg font-mono">
+                    ✓ {posSuccess}
                   </div>
                 )}
 
                 <form onSubmit={handleBarcodeSubmit} className="space-y-3">
                   <p className="text-xs text-slate-400 font-mono">
-                    {quickScanMode 
-                      ? "Quick Scan Mode is Active! Type or scan barcodes from anywhere to register instantly."
-                      : "To simulate a physical barcode scan, type a barcode below or tap any of the quick-scan badges."
-                    }
+                    To simulate a physical barcode scan, type a barcode below or tap any of the quick-scan badges.
                   </p>
                   
                   <div className="flex gap-2">
@@ -708,12 +596,10 @@ export default function AdminPanel({ token, currentUser, activeTab: propActiveTa
                       value={posBarcodeIn}
                       onChange={(e) => setPosBarcodeIn(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 focus:border-yellow-500 rounded-lg h-12 px-4 text-xs text-slate-200 outline-none font-mono"
-                      disabled={quickScanMode}
                     />
                     <button
                       type="submit"
-                      className="bg-yellow-500 hover:bg-yellow-600 text-slate-950 text-xs px-5 h-12 rounded-lg font-bold uppercase shrink-0 transition-all cursor-pointer disabled:opacity-50"
-                      disabled={quickScanMode}
+                      className="bg-yellow-500 hover:bg-yellow-600 text-slate-950 text-xs px-5 h-12 rounded-lg font-bold uppercase shrink-0 transition-all cursor-pointer"
                     >
                       Scan Barcode
                     </button>
